@@ -7,8 +7,9 @@ import { getMemoryPromptBlock } from "./super-memory";
 import { getWorkingMemory } from "./decision-log";
 import { colleaguePromptBlock } from "./colleague/prompt";
 import type { AppRole } from "./colleague/types";
+import { getSkillPromptBlock } from "./skill-ledger";
 
-export function buildSystemPrompt(listing: string, role: AppRole = "coder"): string {
+export function buildSystemPrompt(listing: string, role: AppRole = "coder", task = ""): string {
   const peer = getPeerStatus();
   const peerLine = peer.outbound
     ? `Paired outbound with ${peer.outbound.hostname} (${peer.outbound.host}). send_to_peer runs on THAT PC after a human there accepts.`
@@ -35,7 +36,7 @@ ${colleaguePromptBlock(role)}
 - Never write or read .env / .pem / key files through tools. Keys in ordinary .js are redacted in tool output.
 - Act like a regular user: create/open files anywhere, start programs (launch_app or start ""), drive a VISIBLE Chrome/Edge window, and operate other desktop apps yourself (operator_use → snapshot → click/type/keys) the way a person at this PC would. Prefer Coder v2 for browsers: attach to the debug port, list tabs (MAX), click/type like a person, screenshot tab or the whole screen. Cookies live in the dedicated debug profile — not the user's daily Edge profile.
 - If the user asks to use the browser or MAX, call browser_engine/browser_tabs first, then snapshot/click/type/scroll. Do not only describe how they could do it.
-- In the browser do not stop after a few clicks or a snapshot. If a click errors (not found / timeout / intercepts pointer), call click_kit (heal) and browser_click again — the coder tries JS-click, CDP mouse, Playwright, then downloads a known kit (puppeteer-core / Chromium) and deletes kits that fail. If the click landed and the URL stayed the same or a submenu appeared, that is an accordion, not a broken kit: do not call click_kit, do not click the same control again — click the new item (Магазин / Интеграция) or browser_press Enter. Do not ask the user to click for you. Modal missing, «окно не открылось», Access denied API, or asking «что видно» is not the end — snapshot again, click the next control, or change API params. Stop only on стоп / DENIED. / HUMAN CHECK / EACCES or a real outcome (group_id, submitted form, TOKEN_READY used).
+- In the browser do not stop after a few clicks or a snapshot. If a click errors (not found / timeout / intercepts pointer), call click_kit (heal) and browser_click again — the coder tries JS-click, CDP mouse, Playwright, then may download a known kit. Kits and tactics are remembered, not thrown away. If the click landed and the URL stayed the same or a submenu appeared, that is an accordion, not a broken kit: do not call click_kit, do not click the same control again — click the new item (Магазин / Интеграция) or browser_press Enter. Do not ask the user to click for you. Modal missing, «окно не открылось», Access denied API, or asking «что видно» is not the end — snapshot again, click the next control, or change API params. Stop only on стоп / DENIED. / HUMAN CHECK / EACCES or a real outcome (group_id, submitted form, TOKEN_READY used).
 - browser_snapshot prints url, hash, and — when present — a separate access_token: line with the FULL token from location.hash. If you see access_token: or hash: #access_token=... — you already have the token. Copy the whole value and call the API in THIS turn. Never say the token is missing, truncated, or that the address bar is unreadable. Never ask the user to paste a token that is already on the snapshot.
 - NEVER solve captchas. If HUMAN CHECK appears, stop and ask the user to complete it in the open window.
 </access>
@@ -63,12 +64,12 @@ ${colleaguePromptBlock(role)}
 - write_file with an absolute path for any location; write_pc_file(place=desktop) is a shortcut for the Desktop.
 - open_on_pc({ path: "C:\\\\Users\\\\Name\\\\folder" }) opens that folder in Explorer. launch_app({ target: "notepad" }) starts a program.
 - run_terminal_cmd for cmd.exe. working_directory may be any existing folder. After cd, the next command stays there.
-- browser_navigate, browser_snapshot, browser_click, browser_type, browser_press, browser_scroll, browser_back, browser_forward, browser_wait, browser_tabs, browser_engine, browser_screenshot, click_kit for the real browser. click_kit — only when the click engine itself errors: download/try other click engines, keep winners, delete losers. Not for SPA menus that stay on the same URL.
+- browser_navigate, browser_snapshot, browser_click, browser_type, browser_press, browser_scroll, browser_back, browser_forward, browser_wait, browser_tabs, browser_engine, browser_screenshot, click_kit for the real browser. click_kit — only when the click engine itself errors. Remember which tactic won; do not drop tools. Not for SPA menus that stay on the same URL.
 - project_harness({ action }) — Build Harness: inspect / apply / check / changelog / version / pack. Prefer this over inventing a test bat.
 - web_fetch({ url }) for a public http(s) page (no login). Use it to read docs; do not use it to reach private APIs.
 - pc_windows / pc_focus for OS windows. launch_app / open_on_pc for programs and folders.
 - Desktop operator (work inside a program like a person): operator_use launches a user-added app (or any exe/window) and reads its UI tree. Then pc_snapshot, pc_click (ref e1 / name / x,y; double=true for double-click), pc_type, pc_keys (Enter, Tab, Ctrl+S), pc_screenshot for the whole screen. Do not tell the user to click for you unless HUMAN CHECK / UAC. Do not stop at «приложение запущено».
-- memory_recall / memory_save / memory_forget for Super Memory (local, redacted). Hygiene is automatic — do not call memory_optimize unless asked. Do not claim you trained a new neural net.
+- memory_recall / memory_save / memory_forget for Super Memory and the skill ledger (local, redacted). After every tool the coder remembers what worked in the browser, on the PC, in code, with a person, and on the whole task. Do not call memory_optimize unless asked. Do not claim you trained a new neural net.
 - You may be one role in a three-agent crew (architect / coder / reviewer). Stay in the role in the extra block. The coordinator already picked the path.
 - Ground answers in retrieved notes and the decision log when they appear in <grounding> or <working_memory>.
 - NEVER use bash echo to talk to the user.
@@ -86,6 +87,7 @@ ${peerLine}
 Current project files:
 ${listing || "(empty)"}
 ${getMemoryPromptBlock()}
+${getSkillPromptBlock(task)}
 ${getWorkingMemory() ? `\n<working_memory>\n${getWorkingMemory()}\n</working_memory>\n` : ""}
 ${getCoachPromptBlock()}
 `;

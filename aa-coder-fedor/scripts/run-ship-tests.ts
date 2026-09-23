@@ -10,6 +10,7 @@ const SHIP = [
   "test:coder2",
   "test:click",
   "test:click-outcome",
+  "test:skills",
   "test:local-llm",
   "test:router",
   "test:paid",

@@ -2,6 +2,7 @@ import { collapseOldObservations, formatAciObservation } from "../aci";
 import { BOUNDARY_STOP, shouldStopOnBoundary } from "../agent-boundary";
 import { executeTool, parseToolArgs, GROK_TOOLS } from "../tools";
 import { observeToolForMemory } from "../super-memory";
+import { concludeSkillTask, getSkillTask, recordSkillFromTool, setSkillTask } from "../skill-ledger";
 import { completeOnce, type CompleteOnceOptions, type UpstreamToolCall } from "../llm";
 import { actionFingerprint, FailureMemory, looksFailed, verbalLesson } from "../reflexion";
 import type { ProviderId, TodoItem } from "../types";
@@ -60,6 +61,7 @@ export async function runToolAgent(options: {
     ? Math.max(GOAL_KEEP_GOING, options.maxTurns || 0)
     : Math.max(1, options.maxTurns);
   const failures = new FailureMemory();
+  setSkillTask(options.userGoal || "");
 
   const runModel = async () => {
     let emitted = false;
@@ -160,6 +162,7 @@ export async function runToolAgent(options: {
         });
         continue;
       }
+      finishSkill(content, usedTools, true);
       return { content, messages, todos, usedTools, changedPaths };
     }
 
@@ -201,6 +204,11 @@ export async function runToolAgent(options: {
           tool_call_id: call.id,
           content: formatAciObservation(lesson),
         });
+        try {
+          recordSkillFromTool(call.name, parsedArgs, lesson);
+        } catch {
+          // ignore
+        }
         continue;
       }
       const result = await executeTool(call.name, parsedArgs, todos, options.signal);
@@ -242,6 +250,7 @@ export async function runToolAgent(options: {
           status: "done",
           note: "Стоп: система отказала. Не обхожу.",
         });
+        finishSkill(BOUNDARY_STOP, usedTools, false);
         return { content: BOUNDARY_STOP, messages, todos, usedTools, changedPaths };
       }
     }
@@ -249,5 +258,14 @@ export async function runToolAgent(options: {
     (messages[0] as { content: string }).content = await options.rebuildSystem();
   }
 
+  finishSkill(content, usedTools, true);
   return { content, messages, todos, usedTools, changedPaths };
+}
+
+function finishSkill(content: string, usedTools: string[], ok: boolean): void {
+  try {
+    concludeSkillTask({ task: getSkillTask(), usedTools, content, ok });
+  } catch {
+    // ignore
+  }
 }

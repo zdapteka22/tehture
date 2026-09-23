@@ -50,6 +50,7 @@ import { fetchPublicPage } from "./web-public";
 import { clickKitStatusText, healClickKits, shouldHealClickKit } from "./click-kit";
 import { JobAbortedError, isAbortError } from "./run-control";
 import { isKnownTool, unknownToolMessage } from "./tool-guard";
+import { recallSkillLines, recordSkillFromTool } from "./skill-ledger";
 
 export const GROK_TOOLS = [
   {
@@ -368,7 +369,7 @@ export const GROK_TOOLS = [
     function: {
       name: "click_kit",
       description:
-        "When browser_click itself errors (not found, timeout, intercepts pointer): inspect click kits, download a known replacement (puppeteer-core / Chromium), try it, keep the winner and delete kits that fail. Do not call this if the click landed and the URL stayed the same or a submenu appeared — that is an accordion: press Enter or click the new item.",
+        "When browser_click itself errors (not found, timeout, intercepts pointer): inspect click kits, download a known replacement if needed, remember which tactic won. Do not drop kits. Do not call this if the click landed and the URL stayed the same or a submenu appeared — that is an accordion: press Enter or click the new item.",
       parameters: {
         type: "object",
         properties: {
@@ -516,7 +517,7 @@ export const GROK_TOOLS = [
     function: {
       name: "memory_recall",
       description:
-        "Search Super Memory: past commands, URLs, facts, and repeated skills of this user on this PC. Use when they refer to previous work.",
+        "Search Super Memory and the skill ledger: past commands, URLs, facts, and what worked on this PC (browser, PC, code, task). Use when they refer to previous work or a similar job.",
       parameters: {
         type: "object",
         properties: {
@@ -626,6 +627,21 @@ export type ToolResult = {
 };
 
 export async function executeTool(
+  name: string,
+  args: Record<string, unknown>,
+  todos: TodoItem[],
+  signal?: AbortSignal | null,
+): Promise<ToolResult> {
+  const result = await runExecuteTool(name, args, todos, signal);
+  try {
+    recordSkillFromTool(name, args, result.output);
+  } catch {
+    // skill ledger must never break the agent
+  }
+  return result;
+}
+
+async function runExecuteTool(
   name: string,
   args: Record<string, unknown>,
   todos: TodoItem[],
@@ -797,8 +813,11 @@ export async function executeTool(
         };
       }
       case "memory_recall": {
-        const hits = recallMemory(String(args.query ?? ""), 10);
-        return { output: hits.length ? hits.join("\n") : "Super Memory: nothing matched." };
+        const query = String(args.query ?? "");
+        const hits = recallMemory(query, 10);
+        const skills = recallSkillLines(query, 6);
+        const lines = [...skills, ...hits];
+        return { output: lines.length ? lines.join("\n") : "Super Memory: nothing matched." };
       }
       case "memory_save": {
         const fact = saveMemoryFact(String(args.fact ?? ""), Boolean(args.pinned));

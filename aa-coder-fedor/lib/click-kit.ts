@@ -144,11 +144,7 @@ export function recordClickResult(id: ClickKitId, ok: boolean, error = ""): Clic
   } else {
     kit.losses += 1;
     kit.lastError = String(error || "").slice(0, 240);
-    if (kit.kind !== "bundled" && kit.losses >= 2 && kit.wins === 0) {
-      kit.kept = false;
-      deleteDownloadedKit(id);
-      kit.installed = false;
-    }
+    kit.kept = true;
   }
   writeLedger(ledger);
   return kit;
@@ -219,7 +215,7 @@ function probeInstalled(id: ClickKitId): boolean {
   return false;
 }
 
-/** Detect broken click tools, install the next known kit, drop kits that fail. */
+/** Detect a broken click engine and try the next known kit. Experience is kept even if a download fails. */
 export async function healClickKits(reason = ""): Promise<string> {
   if (!shouldHealClickKit(reason)) return refuseHealText();
   const ledger = readLedger();
@@ -231,31 +227,30 @@ export async function healClickKits(reason = ""): Promise<string> {
     const kit = ledger.kits.find((item) => item.id === spec.id);
     if (!kit) continue;
     if (kit.installed && kit.kept) continue;
-    if (kit.losses >= 2 && kit.wins === 0 && !kit.kept) {
-      lines.push(`${kit.id}: уже пробовали — удалил`);
+    if (!kit.installed && kit.losses >= 3) {
+      lines.push(`${kit.id}: раньше не встал (+${kit.wins}/-${kit.losses}), запись оставил, сейчас не качаю повторно`);
       continue;
     }
     const installed = await installer(spec.id);
     lines.push(`${spec.id}: ${installed.message}`);
     kit.lastError = installed.ok ? "" : installed.message;
     kit.installed = installed.ok;
-    kit.kept = installed.ok;
+    kit.kept = true;
     if (!installed.ok) {
       kit.losses += 1;
       deleteDownloadedKit(spec.id);
       continue;
     }
     if (!probeInstalled(spec.id) && spec.id === "puppeteer-core") {
-      kit.kept = false;
       kit.installed = false;
       kit.losses += 1;
       deleteDownloadedKit(spec.id);
-      lines.push(`${spec.id}: скачался, но не находится — удалил`);
+      lines.push(`${spec.id}: скачался, но не находится — опыт записал, папку с недокачкой убрал`);
       continue;
     }
     ledger.preferred = [spec.id, ...ledger.preferred.filter((id) => id !== spec.id)];
     writeLedger(ledger);
-    lines.push(`оставил ${spec.id}, следующие клики пойдут через него`);
+    lines.push(`запомнил ${spec.id} как рабочий, следующие клики пойдут через него`);
     return lines.join("\n");
   }
 
@@ -275,6 +270,7 @@ export function clickKitStatusText(): string {
       return `- ${kit.id} [${kit.kind}] ${mark}  побед ${kit.wins} / промахов ${kit.losses}${kit.lastError ? `  (${kit.lastError})` : ""}`;
     }),
     "Если клик сам падает (not found / timeout) — кодер меняет набор и может скачать puppeteer-core / Chromium.",
+    "Победителя поднимает в порядке, промах оставляет в журнале. Наборы навыка не выбрасывает.",
     "Если клик прошёл, а URL тот же — это меню/аккордеон. Движок не меняем, жмём появившийся пункт или Enter.",
   ];
   return lines.join("\n");
