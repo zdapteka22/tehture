@@ -1,0 +1,142 @@
+import { isHardBoundary } from "../agent-boundary";
+import { isKnownTool, looksLikeFalseDone } from "../tool-guard";
+import {
+  looksLikeAskingUser,
+  looksLikeBrowserWork,
+  looksLikeKeepGoing,
+  looksLikeNarratingWork,
+  looksLikeOpen,
+  looksLikeOperate,
+  looksLikeStopCommand,
+  looksLikeWrite,
+  looksUnfinished,
+  taskNeedsWork,
+} from "./intent";
+
+export const GOAL_NUDGE =
+  "Стоп. Ты описал шаг словами вместо вызова инструмента. Несколько browser_* кликов — не конец, в браузере сам не останавливайся. Если клик упал ошибкой (not found / timeout) — click_kit(heal), потом browser_click снова. Если клик прошёл, а URL тот же или раскрылось меню — это аккордеон: не вызывай click_kit и не жми ту же кнопку, жми появившийся пункт или browser_press Enter. Сейчас вызови следующий инструмент: browser_snapshot / browser_click / browser_press / click_kit / browser_type / run_terminal_cmd / operator_use / pc_click. Если Observation это JSON error_code / Access denied API — это не DENIED системы: смени параметры и вызови снова в этом ходе. Если в снимке есть строка access_token: — это полный токен, копируй её целиком и сразу вызывай API. Не проси пользователя вставить токен и не спрашивай «что видно». Для сообщества ВК цель = group_id или vk.com/club… На Windows это cmd.exe, не bash.";
+
+/**
+ * Safety ceiling only — not a “job done” signal.
+ * Stop only when the goal is actually done, the user says stop, abort, or a hard boundary.
+ */
+export const GOAL_KEEP_GOING = 10_000;
+
+const WORK_TOOLS =
+  /^(write_file|write_pc_file|search_replace|open_on_pc|launch_app|run_terminal_cmd|operator_use|pc_click|pc_type|pc_keys|pc_snapshot|pc_screenshot|pc_focus|browser_navigate|browser_click|browser_type|browser_press|browser_wait|browser_snapshot|browser_screenshot|click_kit|project_harness)$/;
+const OPEN_TOOLS = /^(open_on_pc|launch_app|operator_use|browser_navigate)$/;
+const WRITE_TOOLS = /^(write_file|write_pc_file|search_replace)$/;
+const OPERATE_TOOLS =
+  /^(operator_use|pc_click|pc_type|pc_keys|pc_screenshot|pc_focus|browser_navigate|browser_click|browser_type|browser_press|browser_wait|click_kit|run_terminal_cmd)$/;
+const LIVE_SITE_TOOLS =
+  /^(browser_|click_kit|operator_use|pc_click|pc_type|pc_keys|pc_screenshot|pc_focus)/;
+const LOOK_ONLY =
+  /^(read_file|list_dir|grep|browser_snapshot|browser_tabs|pc_windows|pc_snapshot|web_fetch|memory_recall)$/;
+
+function looksLikeRetryableApiError(text: string): boolean {
+  return /error_code|error_msg|access denied(?! is)|invalid (token|scope|client)|one of the parameters specified was missing/i.test(
+    String(text || ""),
+  );
+}
+
+function wantsLiveOutcome(task: string): boolean {
+  return /(создай|сделай|заполн|отправ|клик|нажми|войди|авториз|сообществ|групп|паблик|зарегистри|опублик|токен|oauth|access_token)/i.test(
+    task,
+  );
+}
+
+/** Live-site / operator job is done only with a real outcome, not one click. */
+export function looksLikeOperateSuccess(userText: string, content: string): boolean {
+  const task = String(userText || "");
+  const raw = String(content || "");
+  if (!raw.trim()) return false;
+  if (looksLikeFalseDone(raw)) return false;
+  if (looksUnfinished(raw) || looksLikeNarratingWork(raw) || looksLikeAskingUser(raw)) return false;
+  if (looksLikeRetryableApiError(raw)) return false;
+  if (
+    /(не сработал|не открыл|не появил|не отрисов|не могу|пришлите|вставь(те)? токен|посмотрите|напишите|что видно|окно не|модалка не|не нашёл|не нашел|жду вас)/i.test(
+      raw,
+    )
+  ) {
+    return false;
+  }
+  if (/(сообществ|групп|паблик|\bвк\b|вконтакте|\bvk\.(com|ru)\b)/i.test(task) && wantsLiveOutcome(task)) {
+    return /["']?group_id["']?\s*[:=]\s*\d+|vk\.(com|ru)\/(club|public)\d+|сообщество создано|создал сообществ|"type"\s*:\s*"(group|page|event)"/i.test(
+      raw,
+    );
+  }
+  if (/(токен|oauth|access_token)/i.test(task) && !/(сообществ|групп|паблик)/i.test(task)) {
+    return /access_token:|TOKEN_READY|токен получен|vk1\.a\./i.test(raw);
+  }
+  if (wantsLiveOutcome(task) || (looksLikeOperate(task) && !looksLikeBrowserWork(task))) {
+    return /(сохранил|отправил|создано\b|файл записан|clicked and saved|\bdone\b|вошёл|вошел|зарегистрирован|опубликован)/i.test(
+      raw,
+    );
+  }
+  return /(открыл|открыто|страница открыта|перешёл|перешел|готово)/i.test(raw);
+}
+
+export function usedLiveSiteTools(usedTools: string[]): boolean {
+  return usedTools.some((name) => LIVE_SITE_TOOLS.test(String(name || "")));
+}
+
+export function didPcWork(usedTools: string[], changedPaths: string[]): boolean {
+  if (changedPaths.some((item) => String(item || "").trim())) return true;
+  return usedTools.some((name) => WORK_TOOLS.test(String(name || "")));
+}
+
+export function missingGoalWork(userText: string, usedTools: string[], changedPaths: string[]): boolean {
+  if (!taskNeedsWork(userText)) return false;
+  const wantOpen = looksLikeOpen(userText);
+  const wantWrite = looksLikeWrite(userText);
+  const wantOperate = looksLikeOperate(userText);
+  const didOpen = usedTools.some((name) => OPEN_TOOLS.test(String(name || "")));
+  const didWrite =
+    usedTools.some((name) => WRITE_TOOLS.test(String(name || ""))) ||
+    changedPaths.some((item) => String(item || "").trim());
+  const didOperate = usedTools.some((name) => OPERATE_TOOLS.test(String(name || "")));
+  if (wantWrite && !didWrite) return true;
+  if (wantOpen && !didOpen && !didOperate) return true;
+  if (wantOperate) {
+    if (!didOperate) return true;
+    if (usedTools.length > 0 && usedTools.every((name) => LOOK_ONLY.test(String(name || "")))) return true;
+  }
+  return false;
+}
+
+/**
+ * Keep the tool loop alive until the PC actually changed and the model is not
+ * still describing a plan. Narrating «сейчас читаю» is not a step. User stop
+ * and hard boundary still halt. One click on a live site is not the goal.
+ */
+export function shouldNudgeUntilGoal(opts: {
+  userText: string;
+  content: string;
+  usedTools: string[];
+  changedPaths: string[];
+  nudges: number;
+  maxNudges?: number;
+}): boolean {
+  const maxNudges = Math.max(0, opts.maxNudges ?? GOAL_KEEP_GOING);
+  if (opts.nudges >= maxNudges) return false;
+  if (looksLikeStopCommand(opts.userText) || looksLikeStopCommand(opts.content)) return false;
+  if (isHardBoundary(opts.content)) return false;
+  if (looksLikeFalseDone(opts.content)) return true;
+  if (opts.usedTools.some((name) => String(name || "").trim() && !isKnownTool(name))) return true;
+  if (looksLikeRetryableApiError(opts.content)) return true;
+  if (looksLikeNarratingWork(opts.content) || looksUnfinished(opts.content) || looksLikeAskingUser(opts.content)) {
+    return true;
+  }
+  const liveSite =
+    looksLikeOperate(opts.userText) ||
+    looksLikeBrowserWork(opts.userText) ||
+    looksLikeKeepGoing(opts.userText) ||
+    usedLiveSiteTools(opts.usedTools);
+  if (liveSite) {
+    return !looksLikeOperateSuccess(opts.userText, opts.content);
+  }
+  if (!taskNeedsWork(opts.userText)) return false;
+  if (missingGoalWork(opts.userText, opts.usedTools, opts.changedPaths)) return true;
+  if (!didPcWork(opts.usedTools, opts.changedPaths)) return true;
+  return false;
+}
