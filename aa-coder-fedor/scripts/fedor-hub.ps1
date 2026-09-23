@@ -1,5 +1,5 @@
 #requires -Version 5.1
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 $utf8 = New-Object System.Text.UTF8Encoding $false
 $TempDir = [Environment]::GetEnvironmentVariable('TEMP')
 if (-not $TempDir) { $TempDir = [Environment]::GetFolderPath('LocalApplicationData') }
@@ -16,11 +16,20 @@ $CopyFile = Join-Path -Path $HubRoot -ChildPath 'copy.json'
 $Stamp = Join-Path -Path $AppDir -ChildPath '.fedor-hub-ok'
 $BootPs1 = Join-Path -Path $LocalApp -ChildPath 'Fedor2\fedor-hub.ps1'
 $AdminKey = 'fedor-uchet'
-$script:CurrentSort = 'name'
-$script:StatusBox = $null
-$script:UserView = $null
-$script:InvView = $null
-$script:KeyBox = $null
+
+$global:FedorHub = @{
+  Root = $HubRoot
+  StateFile = $StateFile
+  InboxDir = $InboxDir
+  CopyFile = $CopyFile
+  AdminKey = $AdminKey
+  Sort = 'name'
+  Form = $null
+  KeyBox = $null
+  Status = $null
+  Users = $null
+  Invoices = $null
+}
 
 function Write-Log([string]$Text) {
   $line = ((Get-Date).ToString('HH:mm:ss') + ' ' + $Text)
@@ -29,15 +38,6 @@ function Write-Log([string]$Text) {
 
 function Mark-Alive {
   try { [IO.File]::WriteAllText($Alive, 'ok') } catch {}
-}
-
-function Hide-Console {
-  try {
-    $code = "using System; using System.Runtime.InteropServices; public class FedorHubWin { [DllImport(`"kernel32.dll`")] public static extern IntPtr GetConsoleWindow(); [DllImport(`"user32.dll`")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); }"
-    Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
-    $hwnd = [FedorHubWin]::GetConsoleWindow()
-    if ($hwnd -ne [IntPtr]::Zero) { [void][FedorHubWin]::ShowWindow($hwnd, 0) }
-  } catch {}
 }
 
 function Show-Fail([string]$Text) {
@@ -54,11 +54,27 @@ function Ensure-Dirs {
   New-Item -ItemType Directory -Force -Path $InboxDir | Out-Null
 }
 
+function Remove-OldLaunchers {
+  $homes = @()
+  foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'))) {
+    if ($folder) { $homes += $folder }
+  }
+  $one = Join-Path -Path ([Environment]::GetFolderPath('UserProfile')) -ChildPath 'OneDrive\Desktop'
+  if (Test-Path -LiteralPath $one) { $homes += $one }
+  foreach ($desk in $homes) {
+    foreach ($name in @('Fedor-uchet.bat', 'Fedor uchet.bat', 'Fedor-uchet.lnk')) {
+      $p = Join-Path -Path $desk -ChildPath $name
+      try { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } } catch {}
+    }
+  }
+}
+
 function Install-HubCopy {
   $self = [Environment]::GetEnvironmentVariable('GROK_SELF')
   if ($self -and (Test-Path -LiteralPath $self)) {
     Copy-Item -LiteralPath $self -Destination (Join-Path -Path $AppDir -ChildPath 'AA-Coder-Fedor-Hub.bat') -Force
   }
+  Remove-OldLaunchers
   $desk = [Environment]::GetFolderPath('Desktop')
   $ps = Join-Path -Path $PSHOME -ChildPath 'powershell.exe'
   if ($desk) {
@@ -92,20 +108,25 @@ function Empty-State {
 
 function Read-State {
   try {
-    if (Test-Path -LiteralPath $StateFile) {
-      $obj = Get-Content -LiteralPath $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
-      if ($obj) { return $obj }
+    if (Test-Path -LiteralPath $global:FedorHub.StateFile) {
+      $raw = Get-Content -LiteralPath $global:FedorHub.StateFile -Raw -Encoding UTF8
+      if ($raw -and $raw.Trim()) {
+        $obj = $raw | ConvertFrom-Json
+        if ($obj) { return $obj }
+      }
     }
-  } catch { Write-Log ('state: ' + $_.Exception.Message) }
+  } catch {
+    Write-Log ('state: ' + $_.Exception.Message)
+  }
   return (Empty-State)
 }
 
 function Write-State($state) {
   $state.updatedAt = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
   $json = $state | ConvertTo-Json -Depth 10
-  $tmp = $StateFile + '.' + $PID + '.tmp'
+  $tmp = $global:FedorHub.StateFile + '.' + $PID + '.tmp'
   [IO.File]::WriteAllText($tmp, ($json + [Environment]::NewLine), $utf8)
-  Move-Item -LiteralPath $tmp -Destination $StateFile -Force
+  Move-Item -LiteralPath $tmp -Destination $global:FedorHub.StateFile -Force
 }
 
 function As-List($value) {
@@ -129,8 +150,9 @@ function Sort-Users($users, $by) {
 
 function Ingest-Replies($state) {
   $n = 0
-  if (-not (Test-Path -LiteralPath $InboxDir)) { return 0 }
-  foreach ($file in @(Get-ChildItem -LiteralPath $InboxDir -Filter 'reply-*.json' -ErrorAction SilentlyContinue)) {
+  $dir = [string]$global:FedorHub.InboxDir
+  if (-not (Test-Path -LiteralPath $dir)) { return 0 }
+  foreach ($file in @(Get-ChildItem -LiteralPath $dir -Filter 'reply-*.json' -ErrorAction SilentlyContinue)) {
     try { $rep = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
     $hit = $null
     foreach ($u in (As-List $state.users)) {
@@ -151,8 +173,9 @@ function Ingest-Replies($state) {
 }
 
 function Apply-LocalCopy($state) {
-  if (-not (Test-Path -LiteralPath $CopyFile)) { return }
-  try { $copy = Get-Content -LiteralPath $CopyFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return }
+  $copyPath = [string]$global:FedorHub.CopyFile
+  if (-not (Test-Path -LiteralPath $copyPath)) { return }
+  try { $copy = Get-Content -LiteralPath $copyPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return }
   foreach ($u in (As-List $state.users)) {
     $match = $false
     if ($copy.userId -and $u.id -eq $copy.userId) { $match = $true }
@@ -167,98 +190,141 @@ function Apply-LocalCopy($state) {
 }
 
 function Write-Asks($state) {
-  New-Item -ItemType Directory -Force -Path $InboxDir | Out-Null
+  $dir = [string]$global:FedorHub.InboxDir
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $n = 0
   $t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
   foreach ($u in (As-List $state.users)) {
     if (-not $u.id) { continue }
     $payload = @{ type = 'ask-tokens'; userId = [string]$u.id; t = $t } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path -Path $InboxDir -ChildPath ('ask-' + $u.id + '.json')), ($payload + [Environment]::NewLine), $utf8)
+    [IO.File]::WriteAllText((Join-Path -Path $dir -ChildPath ('ask-' + $u.id + '.json')), ($payload + [Environment]::NewLine), $utf8)
     $n++
   }
   return $n
 }
 
 function Set-Status([string]$Text, [bool]$Bad = $false) {
-  if (-not $script:StatusBox) { return }
-  $script:StatusBox.Text = $Text
-  if ($Bad) {
-    $script:StatusBox.ForeColor = [System.Drawing.Color]::FromArgb(248, 113, 113)
-  } else {
-    $script:StatusBox.ForeColor = [System.Drawing.Color]::FromArgb(110, 231, 183)
-  }
+  $box = $global:FedorHub.Status
+  if ($null -eq $box) { return }
+  try {
+    $box.Text = $Text
+    if ($Bad) {
+      $box.ForeColor = [System.Drawing.Color]::FromArgb(248, 113, 113)
+    } else {
+      $box.ForeColor = [System.Drawing.Color]::FromArgb(110, 231, 183)
+    }
+  } catch {}
 }
 
-function Assert-Key {
-  $typed = ''
-  if ($script:KeyBox) { $typed = [string]$script:KeyBox.Text }
-  if ($typed.Trim() -ne $AdminKey) {
-    Set-Status 'Нет доступа. Ключ: fedor-uchet' $true
-    return $false
-  }
-  return $true
+function Ok-Key {
+  $typed = [string]$global:FedorHub.AdminKey
+  try {
+    if ($global:FedorHub.KeyBox -and [string]$global:FedorHub.KeyBox.Text) {
+      $typed = [string]$global:FedorHub.KeyBox.Text
+    }
+  } catch {}
+  return ($typed.Trim() -eq [string]$global:FedorHub.AdminKey)
 }
 
 function Fill-Lists {
-  if (-not (Assert-Key)) { return }
-  $state = Read-State
-  Apply-LocalCopy $state
-  $users = Sort-Users (As-List $state.users) $script:CurrentSort
-  $invoices = @(As-List $state.invoices)
-  $script:UserView.Items.Clear()
-  foreach ($u in $users) {
-    $name = [string]($(if ($u.name) { $u.name } else { $u.email }))
-    $email = [string]$u.email
-    $tok = 0; try { $tok = [int64]$u.lifetimeTokens } catch {}
-    $plan = [string]($(if ($u.planId) { $u.planId } else { 'free' }))
-    $lab = [string]$u.deviceLabel
-    $seen = When-Text $u.lastSeenAt
-    $item = New-Object System.Windows.Forms.ListViewItem($name)
-    [void]$item.SubItems.Add($email)
-    [void]$item.SubItems.Add($plan)
-    [void]$item.SubItems.Add([string]$tok)
-    [void]$item.SubItems.Add($seen)
-    [void]$item.SubItems.Add($lab)
-    [void]$script:UserView.Items.Add($item)
+  try {
+    if ($null -eq $global:FedorHub.Users -or $null -eq $global:FedorHub.Invoices) { return }
+    if (-not (Ok-Key)) {
+      Set-Status 'Нет доступа. Ключ: fedor-uchet' $true
+      return
+    }
+    $state = Read-State
+    Apply-LocalCopy $state
+    $users = Sort-Users (As-List $state.users) $global:FedorHub.Sort
+    $invoices = @(As-List $state.invoices)
+    $global:FedorHub.Users.Items.Clear()
+    if (@($users).Count -lt 1) {
+      $empty = New-Object System.Windows.Forms.ListViewItem('Пока нет копий')
+      [void]$empty.SubItems.Add('Когда сотрудник поставит кодер, расход появится здесь')
+      [void]$empty.SubItems.Add('')
+      [void]$empty.SubItems.Add('0')
+      [void]$empty.SubItems.Add('')
+      [void]$empty.SubItems.Add('')
+      [void]$global:FedorHub.Users.Items.Add($empty)
+    } else {
+      foreach ($u in $users) {
+        $name = [string]($(if ($u.name) { $u.name } else { $u.email }))
+        $email = [string]$u.email
+        $tok = 0; try { $tok = [int64]$u.lifetimeTokens } catch {}
+        $plan = [string]($(if ($u.planId) { $u.planId } else { 'free' }))
+        $lab = [string]$u.deviceLabel
+        $seen = When-Text $u.lastSeenAt
+        $item = New-Object System.Windows.Forms.ListViewItem($name)
+        [void]$item.SubItems.Add($email)
+        [void]$item.SubItems.Add($plan)
+        [void]$item.SubItems.Add([string]$tok)
+        [void]$item.SubItems.Add($seen)
+        [void]$item.SubItems.Add($lab)
+        [void]$global:FedorHub.Users.Items.Add($item)
+      }
+    }
+    $global:FedorHub.Invoices.Items.Clear()
+    if (@($invoices).Count -lt 1) {
+      $empty = New-Object System.Windows.Forms.ListViewItem('Нет счетов')
+      [void]$empty.SubItems.Add('')
+      [void]$empty.SubItems.Add('')
+      [void]$empty.SubItems.Add('')
+      [void]$global:FedorHub.Invoices.Items.Add($empty)
+    } else {
+      foreach ($i in $invoices) {
+        $item = New-Object System.Windows.Forms.ListViewItem([string]$i.id)
+        [void]$item.SubItems.Add([string]$i.amountRub)
+        [void]$item.SubItems.Add([string]$i.method)
+        [void]$item.SubItems.Add([string]$i.status)
+        $item.Tag = [string]$i.id
+        [void]$global:FedorHub.Invoices.Items.Add($item)
+      }
+    }
+    Set-Status ('Пользователей: ' + @($users).Count + '   счета: ' + @($invoices).Count)
+  } catch {
+    Write-Log ('fill: ' + $_.Exception.Message)
+    Set-Status ('Ошибка списка: ' + $_.Exception.Message) $true
   }
-  $script:InvView.Items.Clear()
-  foreach ($i in $invoices) {
-    $item = New-Object System.Windows.Forms.ListViewItem([string]$i.id)
-    [void]$item.SubItems.Add([string]$i.amountRub)
-    [void]$item.SubItems.Add([string]$i.method)
-    [void]$item.SubItems.Add([string]$i.status)
-    $item.Tag = [string]$i.id
-    [void]$script:InvView.Items.Add($item)
-  }
-  Set-Status ('Пользователей: ' + @($users).Count + '   счета: ' + @($invoices).Count)
 }
 
 function Check-Tokens {
-  if (-not (Assert-Key)) { return }
-  $state = Read-State
-  $asked = Write-Asks $state
-  Apply-LocalCopy $state
-  $got = Ingest-Replies $state
-  Write-State $state
-  $script:CurrentSort = 'tokens'
-  Fill-Lists
-  Set-Status ('Запросил ' + $asked + ', ответили ' + $got)
+  try {
+    if (-not (Ok-Key)) { Set-Status 'Нет доступа. Ключ: fedor-uchet' $true; return }
+    $state = Read-State
+    $asked = Write-Asks $state
+    Apply-LocalCopy $state
+    $got = Ingest-Replies $state
+    Write-State $state
+    $global:FedorHub.Sort = 'tokens'
+    Fill-Lists
+    Set-Status ('Запросил ' + $asked + ', ответили ' + $got)
+  } catch {
+    Write-Log ('check: ' + $_.Exception.Message)
+    Set-Status ('Ошибка проверки: ' + $_.Exception.Message) $true
+  }
 }
 
 function Mark-Paid {
-  if (-not (Assert-Key)) { return }
-  if ($script:InvView.SelectedItems.Count -lt 1) {
-    Set-Status 'Выбери счет' $true
-    return
+  try {
+    if (-not (Ok-Key)) { Set-Status 'Нет доступа. Ключ: fedor-uchet' $true; return }
+    $view = $global:FedorHub.Invoices
+    if ($null -eq $view -or $view.SelectedItems.Count -lt 1) {
+      Set-Status 'Выбери счет' $true
+      return
+    }
+    $id = [string]$view.SelectedItems[0].Tag
+    if (-not $id) { Set-Status 'Это не счет' $true; return }
+    $state = Read-State
+    foreach ($inv in (As-List $state.invoices)) {
+      if ([string]$inv.id -eq $id) { $inv.status = 'paid' }
+    }
+    Write-State $state
+    Fill-Lists
+    Set-Status ('Оплачено: ' + $id)
+  } catch {
+    Write-Log ('paid: ' + $_.Exception.Message)
+    Set-Status ('Ошибка оплаты: ' + $_.Exception.Message) $true
   }
-  $id = [string]$script:InvView.SelectedItems[0].Tag
-  $state = Read-State
-  foreach ($inv in (As-List $state.invoices)) {
-    if ([string]$inv.id -eq $id) { $inv.status = 'paid' }
-  }
-  Write-State $state
-  Fill-Lists
-  Set-Status ('Оплачено: ' + $id)
 }
 
 function New-DarkButton([string]$Text, [int]$X, [int]$Y, [int]$W) {
@@ -268,10 +334,10 @@ function New-DarkButton([string]$Text, [int]$X, [int]$Y, [int]$W) {
   $b.Top = $Y
   $b.Width = $W
   $b.Height = 28
-  $b.FlatStyle = 'Flat'
+  $b.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
   $b.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
   $b.ForeColor = [System.Drawing.Color]::White
-  $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(60, 60, 60)
+  try { $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(60, 60, 60) } catch {}
   return $b
 }
 
@@ -279,26 +345,25 @@ function Show-App {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
   [System.Windows.Forms.Application]::EnableVisualStyles()
-  Hide-Console
 
   $bg = [System.Drawing.Color]::FromArgb(11, 11, 11)
   $panel = [System.Drawing.Color]::FromArgb(30, 30, 30)
   $muted = [System.Drawing.Color]::FromArgb(136, 136, 136)
-  $font = New-Object System.Drawing.Font('Segoe UI', 9)
+  $font = New-Object System.Drawing.Font([System.Drawing.FontFamily]::GenericSansSerif, 9)
 
   $form = New-Object System.Windows.Forms.Form
   $form.Text = 'Fedor uchet'
-  $form.StartPosition = 'CenterScreen'
+  $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
   $form.Size = New-Object System.Drawing.Size(920, 680)
   $form.MinimumSize = New-Object System.Drawing.Size(760, 520)
   $form.BackColor = $bg
   $form.ForeColor = [System.Drawing.Color]::FromArgb(204, 204, 204)
   $form.Font = $font
-  $form.TopMost = $false
+  $global:FedorHub.Form = $form
 
   $title = New-Object System.Windows.Forms.Label
   $title.Text = 'Учет'
-  $title.Font = New-Object System.Drawing.Font('Segoe UI', 16, [System.Drawing.FontStyle]::Bold)
+  $title.Font = New-Object System.Drawing.Font([System.Drawing.FontFamily]::GenericSansSerif, 16, [System.Drawing.FontStyle]::Bold)
   $title.ForeColor = [System.Drawing.Color]::White
   $title.AutoSize = $true
   $title.Left = 18
@@ -306,7 +371,7 @@ function Show-App {
   $form.Controls.Add($title)
 
   $hint = New-Object System.Windows.Forms.Label
-  $hint.Text = 'Сила в коде'
+  $hint.Text = 'Сила в коде  ·  приложение, не браузер'
   $hint.ForeColor = $muted
   $hint.AutoSize = $true
   $hint.Left = 120
@@ -320,47 +385,53 @@ function Show-App {
   $keyLabel.Top = 58
   $form.Controls.Add($keyLabel)
 
-  $script:KeyBox = New-Object System.Windows.Forms.TextBox
-  $script:KeyBox.Left = 78
-  $script:KeyBox.Top = 54
-  $script:KeyBox.Width = 220
-  $script:KeyBox.BackColor = $panel
-  $script:KeyBox.ForeColor = [System.Drawing.Color]::White
-  $script:KeyBox.BorderStyle = 'FixedSingle'
-  $script:KeyBox.UseSystemPasswordChar = $true
-  $script:KeyBox.Text = $AdminKey
-  $form.Controls.Add($script:KeyBox)
+  $keyBox = New-Object System.Windows.Forms.TextBox
+  $keyBox.Left = 78
+  $keyBox.Top = 54
+  $keyBox.Width = 220
+  $keyBox.BackColor = $panel
+  $keyBox.ForeColor = [System.Drawing.Color]::White
+  $keyBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $keyBox.UseSystemPasswordChar = $true
+  $keyBox.Text = $AdminKey
+  $form.Controls.Add($keyBox)
+  $global:FedorHub.KeyBox = $keyBox
 
-  $openBtn = New-DarkButton 'Открыть' 300 52 90
-  $openBtn.Add_Click({ Fill-Lists })
+  $global:FedorHub.Fill = ${function:Fill-Lists}
+  $global:FedorHub.Check = ${function:Check-Tokens}
+  $global:FedorHub.Paid = ${function:Mark-Paid}
+
+  $openBtn = New-DarkButton 'Открыть' 310 52 90
+  $openBtn.Add_Click({ & $global:FedorHub.Fill })
   $form.Controls.Add($openBtn)
 
-  $checkBtn = New-DarkButton 'Проверить токены' 400 52 160
-  $checkBtn.Add_Click({ Check-Tokens })
+  $checkBtn = New-DarkButton 'Проверить токены' 410 52 160
+  $checkBtn.Add_Click({ & $global:FedorHub.Check })
   $form.Controls.Add($checkBtn)
 
-  $paidBtn = New-DarkButton 'Оплачено' 570 52 110
-  $paidBtn.Add_Click({ Mark-Paid })
+  $paidBtn = New-DarkButton 'Оплачено' 580 52 110
+  $paidBtn.Add_Click({ & $global:FedorHub.Paid })
   $form.Controls.Add($paidBtn)
 
   $sortName = New-DarkButton 'по имени' 18 92 90
-  $sortName.Add_Click({ $script:CurrentSort = 'name'; Fill-Lists })
+  $sortName.Add_Click({ $global:FedorHub.Sort = 'name'; & $global:FedorHub.Fill })
   $form.Controls.Add($sortName)
   $sortSeen = New-DarkButton 'по визиту' 114 92 96
-  $sortSeen.Add_Click({ $script:CurrentSort = 'lastSeen'; Fill-Lists })
+  $sortSeen.Add_Click({ $global:FedorHub.Sort = 'lastSeen'; & $global:FedorHub.Fill })
   $form.Controls.Add($sortSeen)
   $sortTok = New-DarkButton 'по токенам' 216 92 110
-  $sortTok.Add_Click({ $script:CurrentSort = 'tokens'; Fill-Lists })
+  $sortTok.Add_Click({ $global:FedorHub.Sort = 'tokens'; & $global:FedorHub.Fill })
   $form.Controls.Add($sortTok)
 
-  $script:StatusBox = New-Object System.Windows.Forms.Label
-  $script:StatusBox.Left = 330
-  $script:StatusBox.Top = 98
-  $script:StatusBox.Width = 540
-  $script:StatusBox.Height = 22
-  $script:StatusBox.ForeColor = [System.Drawing.Color]::FromArgb(110, 231, 183)
-  $script:StatusBox.Text = 'Готово'
-  $form.Controls.Add($script:StatusBox)
+  $status = New-Object System.Windows.Forms.Label
+  $status.Left = 340
+  $status.Top = 98
+  $status.Width = 540
+  $status.Height = 22
+  $status.ForeColor = [System.Drawing.Color]::FromArgb(110, 231, 183)
+  $status.Text = 'Готово'
+  $form.Controls.Add($status)
+  $global:FedorHub.Status = $status
 
   $uLabel = New-Object System.Windows.Forms.Label
   $uLabel.Text = 'Пользователи'
@@ -370,25 +441,26 @@ function Show-App {
   $uLabel.AutoSize = $true
   $form.Controls.Add($uLabel)
 
-  $script:UserView = New-Object System.Windows.Forms.ListView
-  $script:UserView.View = 'Details'
-  $script:UserView.FullRowSelect = $true
-  $script:UserView.HideSelection = $false
-  $script:UserView.BackColor = $panel
-  $script:UserView.ForeColor = [System.Drawing.Color]::White
-  $script:UserView.BorderStyle = 'FixedSingle'
-  $script:UserView.Left = 18
-  $script:UserView.Top = 154
-  $script:UserView.Width = 868
-  $script:UserView.Height = 280
-  $script:UserView.Anchor = 'Top,Left,Right,Bottom'
-  [void]$script:UserView.Columns.Add('Имя', 180)
-  [void]$script:UserView.Columns.Add('Почта', 220)
-  [void]$script:UserView.Columns.Add('План', 80)
-  [void]$script:UserView.Columns.Add('Токены', 90)
-  [void]$script:UserView.Columns.Add('Визит', 150)
-  [void]$script:UserView.Columns.Add('ПК', 140)
-  $form.Controls.Add($script:UserView)
+  $users = New-Object System.Windows.Forms.ListView
+  $users.View = [System.Windows.Forms.View]::Details
+  $users.FullRowSelect = $true
+  $users.HideSelection = $false
+  $users.BackColor = $panel
+  $users.ForeColor = [System.Drawing.Color]::White
+  $users.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $users.Left = 18
+  $users.Top = 154
+  $users.Width = 868
+  $users.Height = 280
+  $users.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+  [void]$users.Columns.Add('Имя', 180)
+  [void]$users.Columns.Add('Почта', 220)
+  [void]$users.Columns.Add('План', 80)
+  [void]$users.Columns.Add('Токены', 90)
+  [void]$users.Columns.Add('Визит', 150)
+  [void]$users.Columns.Add('ПК', 140)
+  $form.Controls.Add($users)
+  $global:FedorHub.Users = $users
 
   $iLabel = New-Object System.Windows.Forms.Label
   $iLabel.Text = 'Счета  (выбери и нажми Оплачено)'
@@ -396,26 +468,27 @@ function Show-App {
   $iLabel.Left = 18
   $iLabel.Top = 442
   $iLabel.AutoSize = $true
-  $iLabel.Anchor = 'Left,Bottom'
+  $iLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Bottom
   $form.Controls.Add($iLabel)
 
-  $script:InvView = New-Object System.Windows.Forms.ListView
-  $script:InvView.View = 'Details'
-  $script:InvView.FullRowSelect = $true
-  $script:InvView.HideSelection = $false
-  $script:InvView.BackColor = $panel
-  $script:InvView.ForeColor = [System.Drawing.Color]::White
-  $script:InvView.BorderStyle = 'FixedSingle'
-  $script:InvView.Left = 18
-  $script:InvView.Top = 464
-  $script:InvView.Width = 868
-  $script:InvView.Height = 140
-  $script:InvView.Anchor = 'Left,Right,Bottom'
-  [void]$script:InvView.Columns.Add('ID', 260)
-  [void]$script:InvView.Columns.Add('Сумма', 80)
-  [void]$script:InvView.Columns.Add('Способ', 120)
-  [void]$script:InvView.Columns.Add('Статус', 120)
-  $form.Controls.Add($script:InvView)
+  $inv = New-Object System.Windows.Forms.ListView
+  $inv.View = [System.Windows.Forms.View]::Details
+  $inv.FullRowSelect = $true
+  $inv.HideSelection = $false
+  $inv.BackColor = $panel
+  $inv.ForeColor = [System.Drawing.Color]::White
+  $inv.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $inv.Left = 18
+  $inv.Top = 464
+  $inv.Width = 868
+  $inv.Height = 140
+  $inv.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+  [void]$inv.Columns.Add('ID', 260)
+  [void]$inv.Columns.Add('Сумма', 80)
+  [void]$inv.Columns.Add('Способ', 120)
+  [void]$inv.Columns.Add('Статус', 120)
+  $form.Controls.Add($inv)
+  $global:FedorHub.Invoices = $inv
 
   $foot = New-Object System.Windows.Forms.Label
   $foot.Text = $HubRoot
@@ -423,33 +496,33 @@ function Show-App {
   $foot.Left = 18
   $foot.Top = 612
   $foot.Width = 860
-  $foot.Anchor = 'Left,Right,Bottom'
+  $foot.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
   $form.Controls.Add($foot)
 
   $form.Add_Shown({
     Mark-Alive
-    Fill-Lists
-    $form.Activate()
+    try { & $global:FedorHub.Fill } catch {}
+    try { $global:FedorHub.Form.Activate() } catch {}
   })
-  $timer = New-Object System.Windows.Forms.Timer
-  $timer.Interval = 12000
-  $timer.Add_Tick({ Fill-Lists })
-  $timer.Start()
-  $form.Add_FormClosed({ $timer.Stop() })
+  Mark-Alive
+  Fill-Lists
   [void]$form.ShowDialog()
 }
 
 try {
   Mark-Alive
-  Write-Log 'start'
+  Write-Log 'start app'
   $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
   if ($sta -ne 'STA') {
     $ps = Join-Path -Path $PSHOME -ChildPath 'powershell.exe'
-    $args = '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSCommandPath + '"'
-    Start-Process -FilePath $ps -ArgumentList $args | Out-Null
+    $argList = '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSCommandPath + '"'
+    Start-Process -FilePath $ps -ArgumentList $argList | Out-Null
     exit 0
   }
   Ensure-Dirs
+  if (-not (Test-Path -LiteralPath $StateFile)) {
+    Write-State (Empty-State)
+  }
   Install-HubCopy
   Show-App
   exit 0
