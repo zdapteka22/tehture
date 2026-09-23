@@ -122,7 +122,7 @@ function Read-State {
 }
 
 function Write-State($state) {
-  $state.updatedAt = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+  Set-Note $state 'updatedAt' ([DateTimeOffset]::Now.ToUnixTimeMilliseconds())
   $json = $state | ConvertTo-Json -Depth 10
   $tmp = $global:FedorHub.StateFile + '.' + $PID + '.tmp'
   [IO.File]::WriteAllText($tmp, ($json + [Environment]::NewLine), $utf8)
@@ -132,6 +132,29 @@ function Write-State($state) {
 function As-List($value) {
   if ($null -eq $value) { return @() }
   return @($value)
+}
+
+function Set-Note($obj, [string]$Name, $Value) {
+  if ($null -eq $obj) { return }
+  try {
+    $prop = $obj.PSObject.Properties[$Name]
+    if ($prop) {
+      $prop.Value = $Value
+      return
+    }
+  } catch {}
+  try {
+    Add-Member -InputObject $obj -MemberType NoteProperty -Name $Name -Value $Value -Force
+  } catch {}
+}
+
+function Get-Note($obj, [string]$Name, $Fallback = $null) {
+  if ($null -eq $obj) { return $Fallback }
+  try {
+    $prop = $obj.PSObject.Properties[$Name]
+    if ($prop -and $null -ne $prop.Value) { return $prop.Value }
+  } catch {}
+  return $Fallback
 }
 
 function When-Text($ts) {
@@ -162,11 +185,12 @@ function Ingest-Replies($state) {
       }
     }
     if (-not $hit) { continue }
-    $cur = 0; try { $cur = [int64]$hit.lifetimeTokens } catch {}
-    $got = 0; try { $got = [int64]$rep.lifetimeTokens } catch {}
-    if ($got -gt $cur) { $hit.lifetimeTokens = $got }
-    if ($rep.lastSeenAt) { $hit.lastSeenAt = [int64]$rep.lastSeenAt }
-    $hit.lastTokenReportAt = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+    $cur = 0; try { $cur = [int64](Get-Note $hit 'lifetimeTokens' 0) } catch {}
+    $got = 0; try { $got = [int64](Get-Note $rep 'lifetimeTokens' 0) } catch {}
+    if ($got -gt $cur) { Set-Note $hit 'lifetimeTokens' $got }
+    $seen = Get-Note $rep 'lastSeenAt' $null
+    if ($seen) { Set-Note $hit 'lastSeenAt' ([int64]$seen) }
+    Set-Note $hit 'lastTokenReportAt' ([DateTimeOffset]::Now.ToUnixTimeMilliseconds())
     $n++
   }
   return $n
@@ -177,15 +201,20 @@ function Apply-LocalCopy($state) {
   if (-not (Test-Path -LiteralPath $copyPath)) { return }
   try { $copy = Get-Content -LiteralPath $copyPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return }
   foreach ($u in (As-List $state.users)) {
-    $match = $false
-    if ($copy.userId -and $u.id -eq $copy.userId) { $match = $true }
-    if ($copy.email -and $u.email -eq $copy.email) { $match = $true }
-    if ($copy.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $copy.deviceLabel) { $match = $true }
-    if (-not $match) { continue }
-    $cur = 0; try { $cur = [int64]$u.lifetimeTokens } catch {}
-    $got = 0; try { $got = [int64]$copy.lifetimeTokens } catch {}
-    if ($got -gt $cur) { $u.lifetimeTokens = $got }
-    if ($copy.lastSeenAt) { $u.lastSeenAt = [int64]$copy.lastSeenAt }
+    try {
+      $match = $false
+      if ($copy.userId -and $u.id -eq $copy.userId) { $match = $true }
+      if ($copy.email -and $u.email -eq $copy.email) { $match = $true }
+      if ($copy.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $copy.deviceLabel) { $match = $true }
+      if (-not $match) { continue }
+      $cur = 0; try { $cur = [int64](Get-Note $u 'lifetimeTokens' 0) } catch {}
+      $got = 0; try { $got = [int64](Get-Note $copy 'lifetimeTokens' 0) } catch {}
+      if ($got -gt $cur) { Set-Note $u 'lifetimeTokens' $got }
+      $seen = Get-Note $copy 'lastSeenAt' $null
+      if ($seen) { Set-Note $u 'lastSeenAt' ([int64]$seen) }
+    } catch {
+      Write-Log ('copy-row: ' + $_.Exception.Message)
+    }
   }
 }
 
@@ -316,7 +345,7 @@ function Mark-Paid {
     if (-not $id) { Set-Status 'Это не счет' $true; return }
     $state = Read-State
     foreach ($inv in (As-List $state.invoices)) {
-      if ([string]$inv.id -eq $id) { $inv.status = 'paid' }
+      if ([string]$inv.id -eq $id) { Set-Note $inv 'status' 'paid' }
     }
     Write-State $state
     Fill-Lists
@@ -345,6 +374,16 @@ function Show-App {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
   [System.Windows.Forms.Application]::EnableVisualStyles()
+  try {
+    [System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+    [System.Windows.Forms.Application]::add_ThreadException({
+      param($sender, $ev)
+      $msg = ''
+      try { $msg = [string]$ev.Exception.Message } catch { $msg = 'ui error' }
+      Write-Log ('ui: ' + $msg)
+      Set-Status ('Ошибка: ' + $msg) $true
+    })
+  } catch {}
 
   $bg = [System.Drawing.Color]::FromArgb(11, 11, 11)
   $panel = [System.Drawing.Color]::FromArgb(30, 30, 30)
