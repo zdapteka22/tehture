@@ -1,0 +1,41 @@
+{
+  "name": "loop-guard",
+  "version": "2.0.0",
+  "purpose": "Агент не останавливается, пока цель не достигнута или пользователь не остановил. Внезапная остановка проверяется и процесс запускается снова.",
+  "rules": [
+    "Пока done_when не выполнен и max_loops не исчерпан — следующий ход обязателен.",
+    "Запрещено заканчивать ход словами 'план', 'сделаю позже', 'дальше можно'.",
+    "Каждый ход = минимум один вызов инструмента, меняющий реальный файл или состояние.",
+    "Если вызов упал — меняю параметры и пробую снова, а не повторяю тот же вызов.",
+    "Остановка разрешена только: (1) цель достигнута и подтверждена, (2) пользователь сказал стоп, (3) max_loops исчерпан -> BLOCKED, (4) внешний запрет DENIED / HUMAN CHECK / EACCES.",
+    "Внезапная остановка без этих причин = UNJUSTIFIED -> RESTART.",
+    "Утверждение 'готово' без квитанции инструмента = ложь -> RESTART.",
+    "PASS объявляет check/KILLER, не IMPLEMENTER."
+  ],
+  "stop_words": ["стоп", "остановись", "хватит", "stop", "cancel"],
+  "plan_phrases": ["сделаю позже", "дальше можно", "план:", "потом сделаю", "на этом всё", "пока всё"],
+  "done_phrases": ["готово", "сделано", "готово.", "done", "completed", "цель достигнута", "задача закрыта"],
+  "external_deny": ["DENIED", "HUMAN CHECK", "EACCES"],
+  "justified_stop": ["user_stop", "goal_verified", "max_loops", "external_deny"],
+  "unjustified_stop": [
+    "no_reason",
+    "plan_language",
+    "done_without_evidence",
+    "lie_about_tools",
+    "no_state_change",
+    "stale_heartbeat",
+    "process_died",
+    "stale_done"
+  ],
+  "on_unjustified": "restart",
+  "max_loops": 256,
+  "max_restarts": 3,
+  "heartbeat_stale_ms": 90000,
+  "hmac_env": "LOOP_GUARD_HMAC",
+  "log": ".agent/LOOPS.md",
+  "state": ".agent/loop-guard.state.json",
+  "heartbeat": ".agent/loop-guard.heartbeat",
+  "receipts": ".agent/receipts.jsonl",
+  "restart_command": null,
+  "restart_args": []
+}

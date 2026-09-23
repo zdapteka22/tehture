@@ -1,0 +1,660 @@
+#!/usr/bin/env node
+// loop-guard 2.0 — стоп только если обоснован; иначе RESTART.
+// Ноль зависимостей. Windows + POSIX.
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+
+export const EXIT = { DONE: 0, BLOCKED: 1, CONTINUE: 2, WATCHDOG_EXHAUSTED: 75 };
+
+const DEFAULT_CFG = {
+  stop_words: ['стоп', 'остановись', 'хватит', 'stop', 'cancel'],
+  plan_phrases: ['сделаю позже', 'дальше можно', 'план:', 'потом сделаю', 'на этом всё', 'пока всё'],
+  done_phrases: ['готово', 'сделано', 'done', 'completed', 'цель достигнута', 'задача закрыта'],
+  external_deny: ['DENIED', 'HUMAN CHECK', 'EACCES'],
+  max_loops: 256,
+  max_restarts: 3,
+  heartbeat_stale_ms: 90000,
+  hmac_env: 'LOOP_GUARD_HMAC',
+  restart_command: null,
+  restart_args: [],
+};
+
+function loadJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+export function loadConfig(dir = __dirname) {
+  const raw = loadJson(path.join(dir, 'loop-guard.json'), {});
+  return { ...DEFAULT_CFG, ...raw };
+}
+
+export function emptyState(cfg = DEFAULT_CFG) {
+  return {
+    goal: '',
+    done_when: [],
+    verified: [],
+    loops: 0,
+    max_loops: cfg.max_loops ?? 256,
+    verdict: 'CONTINUE',
+    reason: 'start',
+    stop_reason: null,
+    restarts: 0,
+    max_restarts: cfg.max_restarts ?? 3,
+    last_heartbeat: null,
+    pid: null,
+    last_user: '',
+    last_assistant: '',
+    receipts_this_turn: 0,
+    state_changed: false,
+    last_unjustified: null,
+  };
+}
+
+function norm(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+export function isUserStop(text, cfg = DEFAULT_CFG) {
+  const t = norm(text);
+  if (!t) return false;
+  return (cfg.stop_words || DEFAULT_CFG.stop_words).some((w) => {
+    const n = norm(w);
+    return t === n || t.startsWith(n + ' ') || t.endsWith(' ' + n) || t.includes(' ' + n + ' ');
+  });
+}
+
+export function isPlanLanguage(text, cfg = DEFAULT_CFG) {
+  const t = norm(text);
+  return (cfg.plan_phrases || DEFAULT_CFG.plan_phrases).some((p) => t.includes(norm(p)));
+}
+
+export function isDoneClaim(text, cfg = DEFAULT_CFG) {
+  const t = norm(text);
+  if (!t) return false;
+  return (cfg.done_phrases || DEFAULT_CFG.done_phrases).some((p) => {
+    const n = norm(p);
+    return t === n || t.startsWith(n) || t.includes(' ' + n);
+  });
+}
+
+export function isExternalDeny(text, cfg = DEFAULT_CFG) {
+  const t = String(text || '');
+  return (cfg.external_deny || DEFAULT_CFG.external_deny).some((p) => t.includes(p));
+}
+
+export function goalVerified(state) {
+  const need = state.done_when || [];
+  if (!need.length) return false;
+  const have = new Set(state.verified || []);
+  return need.every((x) => have.has(x));
+}
+
+export function heartbeatStale(state, now, staleMs) {
+  if (!state.last_heartbeat) return true;
+  return now - Date.parse(state.last_heartbeat) > staleMs;
+}
+
+function hasUnrecoveredError(receipts) {
+  const list = receipts || [];
+  const errors = list.filter((r) => r && r.error);
+  if (!errors.length) return false;
+  const recovered = list.some((r) => r && !r.error && r.recovers);
+  return !recovered;
+}
+
+/**
+ * Классификатор стопа.
+ * event: {
+ *   type: 'tick'|'stop-attempt'|'process-check',
+ *   userText, assistantText, observation,
+ *   processAlive, now, receipts, stateChanged
+ * }
+ */
+export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
+  const now = event.now || Date.now();
+  const receipts = event.receipts || [];
+  const staleMs = cfg.heartbeat_stale_ms ?? 90000;
+
+  if (isUserStop(event.userText, cfg)) {
+    return { justified: true, reason: 'user_stop', action: 'STOP', verdict: 'DONE' };
+  }
+  if (isExternalDeny(event.observation, cfg) || isExternalDeny(event.assistantText, cfg)) {
+    return { justified: true, reason: 'external_deny', action: 'STOP', verdict: 'DONE' };
+  }
+  if ((state.loops || 0) >= (state.max_loops || cfg.max_loops || 256)) {
+    return { justified: true, reason: 'max_loops', action: 'BLOCKED', verdict: 'BLOCKED' };
+  }
+  if (goalVerified(state) && !hasUnrecoveredError(receipts) && !isPlanLanguage(event.assistantText, cfg)) {
+    return { justified: true, reason: 'goal_verified', action: 'DONE', verdict: 'DONE' };
+  }
+
+  if (state.verdict === 'DONE' && !goalVerified(state)) {
+    return { justified: false, reason: 'stale_done', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (event.processAlive === false && !goalVerified(state)) {
+    return { justified: false, reason: 'process_died', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (event.type === 'process-check' && heartbeatStale(state, now, staleMs) && !goalVerified(state)) {
+    return { justified: false, reason: 'stale_heartbeat', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (isPlanLanguage(event.assistantText, cfg)) {
+    return { justified: false, reason: 'plan_language', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (isDoneClaim(event.assistantText, cfg) && receipts.length === 0 && (state.receipts_this_turn || 0) === 0) {
+    return { justified: false, reason: 'done_without_evidence', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (isDoneClaim(event.assistantText, cfg) && hasUnrecoveredError(receipts)) {
+    return { justified: false, reason: 'lie_about_tools', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (isDoneClaim(event.assistantText, cfg) && event.stateChanged === false && !state.state_changed) {
+    return { justified: false, reason: 'no_state_change', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+  if (event.type === 'stop-attempt' && !goalVerified(state)) {
+    return { justified: false, reason: 'no_reason', action: 'RESTART', verdict: 'CONTINUE' };
+  }
+
+  return { justified: false, reason: 'in_progress', action: 'CONTINUE', verdict: 'CONTINUE' };
+}
+
+export function applyClassification(state, cls, cfg = DEFAULT_CFG) {
+  const next = { ...state };
+  if (cls.justified) {
+    next.verdict = cls.verdict;
+    next.reason = cls.reason;
+    next.stop_reason = cls.reason;
+    next.last_unjustified = null;
+    return next;
+  }
+  if (cls.action === 'CONTINUE' && cls.reason === 'in_progress') {
+    next.verdict = 'CONTINUE';
+    next.reason = cls.reason;
+    next.stop_reason = null;
+    return next;
+  }
+  const maxR = next.max_restarts ?? cfg.max_restarts ?? 3;
+  if ((next.restarts || 0) >= maxR) {
+    next.verdict = 'BLOCKED';
+    next.reason = 'restart limit';
+    next.stop_reason = 'restart_limit';
+    next.last_unjustified = cls.reason;
+    return next;
+  }
+  next.restarts = (next.restarts || 0) + 1;
+  next.verdict = 'CONTINUE';
+  next.reason = 'unjustified-stop: ' + cls.reason;
+  next.stop_reason = null;
+  next.last_unjustified = cls.reason;
+  return next;
+}
+
+export function hmacSecret(cfg = DEFAULT_CFG) {
+  return process.env[cfg.hmac_env || 'LOOP_GUARD_HMAC'] || 'loop-guard-local';
+}
+
+export function makeReceipt(tool, result, error, cfg = DEFAULT_CFG) {
+  const payload = {
+    id: crypto.randomBytes(8).toString('hex'),
+    t: new Date().toISOString(),
+    tool: String(tool || ''),
+    result: String(result || '').slice(0, 2000),
+    error: error ? String(error).slice(0, 500) : null,
+  };
+  const body = JSON.stringify({ tool: payload.tool, result: payload.result, error: payload.error, t: payload.t });
+  payload.hash = crypto.createHash('sha256').update(body).digest('hex');
+  payload.hmac = crypto.createHmac('sha256', hmacSecret(cfg)).update(payload.hash).digest('hex');
+  return payload;
+}
+
+export function verifyReceipt(receipt, cfg = DEFAULT_CFG) {
+  if (!receipt || !receipt.hash || !receipt.hmac) return { verdict: 'UNVERIFIED', reason: 'missing-signature' };
+  const body = JSON.stringify({
+    tool: receipt.tool,
+    result: receipt.result,
+    error: receipt.error,
+    t: receipt.t,
+  });
+  const hash = crypto.createHash('sha256').update(body).digest('hex');
+  if (hash !== receipt.hash) return { verdict: 'TAMPERED', reason: 'hash-mismatch' };
+  const hmac = crypto.createHmac('sha256', hmacSecret(cfg)).update(receipt.hash).digest('hex');
+  if (hmac !== receipt.hmac) return { verdict: 'TAMPERED', reason: 'hmac-mismatch' };
+  return { verdict: 'VERIFIED', reason: 'ok' };
+}
+
+export function verifyClaim(claimTool, receipts) {
+  const list = receipts || [];
+  const hit = list.find((r) => r.tool === claimTool);
+  if (!hit) return { verdict: 'UNVERIFIED', reason: 'no-receipt-for-tool' };
+  const sig = verifyReceipt(hit);
+  if (sig.verdict !== 'VERIFIED') return sig;
+  return { verdict: 'VERIFIED', reason: 'receipt-matches', receipt: hit };
+}
+
+export function runRestartCommand(cfg = DEFAULT_CFG, { detached = false, cwd = ROOT } = {}) {
+  if (!cfg.restart_command) return { ran: false };
+  const args = Array.isArray(cfg.restart_args) ? cfg.restart_args : [];
+  if (detached) {
+    const child = spawn(cfg.restart_command, args, {
+      detached: true,
+      stdio: 'ignore',
+      cwd,
+      env: process.env,
+    });
+    child.unref();
+    return { ran: true, pid: child.pid };
+  }
+  const r = spawnSync(cfg.restart_command, args, {
+    encoding: 'utf8',
+    timeout: 20000,
+    cwd,
+    env: process.env,
+  });
+  return { ran: true, status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+function paths(dir) {
+  return {
+    state: path.join(dir, 'loop-guard.state.json'),
+    heartbeat: path.join(dir, 'loop-guard.heartbeat'),
+    receipts: path.join(dir, 'receipts.jsonl'),
+    log: path.join(dir, 'LOOPS.md'),
+  };
+}
+
+function readState(dir, cfg) {
+  const p = paths(dir).state;
+  const s = loadJson(p, null);
+  return s || emptyState(cfg);
+}
+
+function writeState(dir, state) {
+  fs.writeFileSync(paths(dir).state, JSON.stringify(state, null, 2), 'utf8');
+}
+
+function appendLog(dir, line) {
+  const p = paths(dir).log;
+  fs.appendFileSync(p, line + '\n', 'utf8');
+}
+
+function writeRestartTicket(dir, cls, state) {
+  const ticket = {
+    t: new Date().toISOString(),
+    reason: cls.reason,
+    action: 'RESTART',
+    goal: state.goal || '',
+    restarts: state.restarts || 0,
+    verdict: state.verdict,
+  };
+  fs.writeFileSync(path.join(dir, 'restart.ticket.json'), JSON.stringify(ticket, null, 2), 'utf8');
+}
+
+function readReceipts(dir) {
+  const p = paths(dir).receipts;
+  if (!fs.existsSync(p)) return [];
+  return fs.readFileSync(p, 'utf8')
+    .split(/\n/)
+    .filter(Boolean)
+    .map((l) => {
+      try { return JSON.parse(l); } catch { return null; }
+    })
+    .filter(Boolean);
+}
+
+function printStatus(state) {
+  console.log('VERDICT=' + state.verdict);
+  console.log('REASON=' + (state.reason || ''));
+  console.log('LOOPS=' + (state.loops || 0) + '/' + (state.max_loops || 256));
+  console.log('GOAL=' + (state.goal || ''));
+  if (state.last_unjustified) console.log('UNJUSTIFIED=' + state.last_unjustified);
+  if (state.restarts) console.log('RESTARTS=' + state.restarts + '/' + (state.max_restarts || 3));
+}
+
+function argVal(args, name) {
+  const p = '--' + name + '=';
+  const hit = args.find((a) => a.startsWith(p));
+  return hit ? hit.slice(p.length) : undefined;
+}
+
+function flag(args, name) {
+  return args.includes('--' + name);
+}
+
+export function beginGoal(state, goal, doneWhen) {
+  const next = emptyState({ max_loops: state.max_loops, max_restarts: state.max_restarts });
+  next.goal = goal || '';
+  next.done_when = (doneWhen || []).filter(Boolean);
+  next.verdict = 'CONTINUE';
+  next.reason = 'start';
+  next.last_heartbeat = new Date().toISOString();
+  next.pid = process.pid;
+  return next;
+}
+
+function cmdBegin(dir, cfg, args) {
+  const state = beginGoal(readState(dir, cfg), argVal(args, 'goal') || '', String(argVal(args, 'done-when') || '').split('|'));
+  writeState(dir, state);
+  printStatus(state);
+}
+
+function cmdHeartbeat(dir, cfg) {
+  const state = readState(dir, cfg);
+  state.last_heartbeat = new Date().toISOString();
+  state.pid = process.pid;
+  writeState(dir, state);
+  fs.writeFileSync(paths(dir).heartbeat, JSON.stringify({ t: state.last_heartbeat, pid: process.pid }), 'utf8');
+  console.log('HEARTBEAT=' + state.last_heartbeat);
+}
+
+function cmdReceipt(dir, cfg, args) {
+  const rec = makeReceipt(argVal(args, 'tool') || 'tool', argVal(args, 'result') || '', argVal(args, 'error') || null, cfg);
+  fs.appendFileSync(paths(dir).receipts, JSON.stringify(rec) + '\n', 'utf8');
+  const state = readState(dir, cfg);
+  state.receipts_this_turn = (state.receipts_this_turn || 0) + 1;
+  if (!rec.error) state.state_changed = true;
+  writeState(dir, state);
+  console.log('RECEIPT=' + rec.id);
+  console.log('HASH=' + rec.hash);
+}
+
+function cmdVerify(dir, cfg, args) {
+  const tool = argVal(args, 'tool') || '';
+  const out = verifyClaim(tool, readReceipts(dir));
+  console.log('CLAIM=' + tool);
+  console.log('VERDICT=' + out.verdict);
+  console.log('REASON=' + out.reason);
+}
+
+function cmdClassify(dir, cfg, args) {
+  const state = readState(dir, cfg);
+  const event = {
+    type: argVal(args, 'type') || 'stop-attempt',
+    userText: argVal(args, 'user') || state.last_user,
+    assistantText: argVal(args, 'assistant') || state.last_assistant,
+    observation: argVal(args, 'observation') || '',
+    processAlive: argVal(args, 'alive') === undefined ? true : argVal(args, 'alive') !== '0',
+    now: Date.now(),
+    receipts: readReceipts(dir),
+    stateChanged: state.state_changed,
+  };
+  const cls = classifyStop(state, event, cfg);
+  const next = applyClassification(state, cls, cfg);
+  next.last_assistant = event.assistantText || next.last_assistant;
+  next.last_user = event.userText || next.last_user;
+  writeState(dir, next);
+  printStatus(next);
+  console.log('JUSTIFIED=' + (cls.justified ? 'yes' : 'no'));
+  console.log('ACTION=' + cls.action);
+  if (cls.action === 'RESTART' && next.verdict === 'CONTINUE') {
+    writeRestartTicket(dir, cls, next);
+    const run = runRestartCommand(cfg, { detached: flag(args, 'detach'), cwd: ROOT });
+    if (run.ran) console.log('RESTARTED=' + (run.pid || run.status));
+    else console.log('RESTARTED=ticket');
+    appendLog(dir, '- unjustified ' + cls.reason + ' -> RESTART #' + next.restarts);
+  }
+}
+
+function cmdOnUser(dir, cfg, args) {
+  const text = args.filter((a) => !a.startsWith('--')).join(' ') || argVal(args, 'text') || '';
+  let state = readState(dir, cfg);
+  state.last_user = text;
+  if (isUserStop(text, cfg)) {
+    state = applyClassification(state, classifyStop(state, { userText: text }, cfg), cfg);
+  } else if (state.verdict === 'DONE' && !goalVerified(state)) {
+    state.verdict = 'CONTINUE';
+    state.reason = 'new-user-message';
+    state.stop_reason = null;
+  } else if (state.verdict === 'DONE' && text && text !== state.goal) {
+    state = beginGoal(state, text, state.done_when);
+    state.reason = 'new-goal-from-user';
+  }
+  writeState(dir, state);
+  printStatus(state);
+}
+
+function cmdVerifyCriterion(dir, cfg, args) {
+  const name = argVal(args, 'name') || args.find((a) => !a.startsWith('--')) || '';
+  const state = readState(dir, cfg);
+  if (name && (state.done_when || []).includes(name) && !(state.verified || []).includes(name)) {
+    state.verified = [...(state.verified || []), name];
+  }
+  if (goalVerified(state)) {
+    state.verdict = 'DONE';
+    state.reason = 'goal_verified';
+    state.stop_reason = 'goal_verified';
+    state.last_unjustified = null;
+  }
+  writeState(dir, state);
+  printStatus(state);
+}
+
+function cmdTick(dir, cfg) {
+  const state = readState(dir, cfg);
+  state.loops = (state.loops || 0) + 1;
+  state.last_heartbeat = new Date().toISOString();
+  state.receipts_this_turn = 0;
+  state.state_changed = false;
+  const cls = classifyStop(state, { type: 'tick', now: Date.now() }, cfg);
+  const next = applyClassification(state, cls, cfg);
+  writeState(dir, next);
+  printStatus(next);
+}
+
+function cmdStatus(dir, cfg) {
+  printStatus(readState(dir, cfg));
+}
+
+function cmdEnforce(dir, cfg) {
+  const state = readState(dir, cfg);
+  const cls = classifyStop(state, {
+    type: 'stop-attempt',
+    userText: state.last_user,
+    assistantText: state.last_assistant,
+    processAlive: true,
+    now: Date.now(),
+    receipts: readReceipts(dir),
+    stateChanged: state.state_changed,
+  }, cfg);
+  const next = applyClassification(state, cls, cfg);
+  writeState(dir, next);
+  printStatus(next);
+  if (next.verdict === 'CONTINUE') {
+    if (cls.action === 'RESTART') writeRestartTicket(dir, cls, next);
+    console.log('ACTION=' + (cls.action === 'RESTART' ? 'RESTART' : 'агент НЕ останавливается до цели или стопа'));
+    process.exitCode = EXIT.CONTINUE;
+    return;
+  }
+  if (next.verdict === 'BLOCKED') {
+    console.log('ACTION=остановка: BLOCKED');
+    process.exitCode = EXIT.BLOCKED;
+    return;
+  }
+  console.log('ACTION=остановка разрешена.');
+  process.exitCode = EXIT.DONE;
+}
+
+function processAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cmdWatchdog(dir, cfg, args) {
+  const state = readState(dir, cfg);
+  const alive = processAlive(state.pid);
+  const cls = classifyStop(state, {
+    type: 'process-check',
+    processAlive: alive,
+    now: Date.now(),
+    receipts: readReceipts(dir),
+    assistantText: state.last_assistant,
+    userText: state.last_user,
+  }, cfg);
+  const next = applyClassification(state, cls, cfg);
+  writeState(dir, next);
+  printStatus(next);
+  console.log('ALIVE=' + (alive ? '1' : '0'));
+  console.log('ACTION=' + cls.action);
+  if (next.verdict === 'BLOCKED' && next.reason === 'restart limit') {
+    process.exitCode = EXIT.WATCHDOG_EXHAUSTED;
+    return;
+  }
+  if (cls.action === 'RESTART' && next.verdict === 'CONTINUE') {
+    writeRestartTicket(dir, cls, next);
+    const run = runRestartCommand(cfg, { detached: !flag(args, 'sync'), cwd: ROOT });
+    console.log('RESTARTED=' + (run.ran ? (run.pid || run.status) : 'ticket'));
+    appendLog(dir, '- watchdog ' + cls.reason + ' -> RESTART #' + next.restarts);
+    process.exitCode = EXIT.CONTINUE;
+    return;
+  }
+  process.exitCode = next.verdict === 'DONE' ? EXIT.DONE : EXIT.CONTINUE;
+}
+
+function ok(name, cond) {
+  if (!cond) {
+    console.log('FAIL ' + name);
+    return false;
+  }
+  console.log('ok   ' + name);
+  return true;
+}
+
+function selftest() {
+  const cfg = { ...DEFAULT_CFG, heartbeat_stale_ms: 1000, max_restarts: 3, max_loops: 3 };
+  let pass = true;
+
+  let s = emptyState(cfg);
+  s.goal = 'x';
+  s.done_when = ['a'];
+  let c = classifyStop(s, { type: 'tick' }, cfg);
+  pass &= ok('старт -> CONTINUE', c.verdict === 'CONTINUE' && c.reason === 'in_progress');
+
+  s.loops = 2;
+  c = classifyStop(s, { type: 'tick' }, cfg);
+  pass &= ok('ход 2 -> CONTINUE', c.verdict === 'CONTINUE');
+
+  s.loops = 3;
+  c = classifyStop(s, { type: 'tick' }, cfg);
+  pass &= ok('лимит -> BLOCKED', c.justified && c.verdict === 'BLOCKED' && c.reason === 'max_loops');
+
+  s = emptyState(cfg);
+  s.done_when = ['a', 'b'];
+  s.verified = ['a', 'b'];
+  c = classifyStop(s, { type: 'stop-attempt' }, cfg);
+  pass &= ok('done -> DONE', c.justified && c.verdict === 'DONE' && c.reason === 'goal_verified');
+
+  pass &= ok('стоп пользователя', isUserStop('остановись', cfg));
+  pass &= ok('распознан стоп', isUserStop('stop please', cfg));
+  pass &= ok('обычный текст не стоп', !isUserStop('продолжай работу', cfg));
+
+  s = emptyState(cfg);
+  s.goal = 'сервис карт';
+  s.done_when = ['qr'];
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: '' }, cfg);
+  const a1 = applyClassification(s, c, cfg);
+  pass &= ok('внезапная остановка -> RESTART', !c.justified && c.reason === 'no_reason' && a1.verdict === 'CONTINUE' && a1.restarts === 1);
+
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'готово' }, cfg);
+  pass &= ok('готово без доказательств -> UNJUSTIFIED', !c.justified && c.reason === 'done_without_evidence');
+
+  c = classifyStop(s, { type: 'stop-attempt', userText: 'стоп' }, cfg);
+  pass &= ok('стоп пользователя не рестартит', c.justified && c.reason === 'user_stop');
+
+  s.last_heartbeat = new Date(Date.now() - 5000).toISOString();
+  c = classifyStop(s, { type: 'process-check', processAlive: true, now: Date.now() }, cfg);
+  pass &= ok('heartbeat протух -> RESTART', !c.justified && c.reason === 'stale_heartbeat');
+
+  const bad = [makeReceipt('pay', '', 'ECONNREFUSED', cfg)];
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'Done — deployed successfully', receipts: bad }, cfg);
+  pass &= ok('ложь про инструмент -> UNJUSTIFIED', !c.justified && c.reason === 'lie_about_tools');
+
+  let lim = emptyState(cfg);
+  lim.done_when = ['x'];
+  lim.restarts = 3;
+  c = classifyStop(lim, { type: 'stop-attempt' }, cfg);
+  const a2 = applyClassification(lim, c, cfg);
+  pass &= ok('лимит рестартов -> BLOCKED', a2.verdict === 'BLOCKED' && a2.reason === 'restart limit');
+
+  let stale = emptyState(cfg);
+  stale.verdict = 'DONE';
+  stale.reason = 'old goal';
+  stale.done_when = ['z'];
+  c = classifyStop(stale, { type: 'tick' }, cfg);
+  pass &= ok('старый DONE без критериев -> RESTART', !c.justified && c.reason === 'stale_done');
+
+  pass &= ok('DENIED обоснован', classifyStop(s, { observation: 'DENIED cwd=...' }, cfg).reason === 'external_deny');
+  pass &= ok('план-язык -> UNJUSTIFIED', classifyStop(s, { assistantText: 'план: сделаю позже' }, cfg).reason === 'plan_language');
+
+  const rec = makeReceipt('curl', 'HEALTH ok', null, cfg);
+  const v1 = verifyReceipt(rec, cfg);
+  pass &= ok('квитанция VERIFIED', v1.verdict === 'VERIFIED');
+  const v2 = verifyClaim('curl', [rec]);
+  pass &= ok('заявленный инструмент есть', v2.verdict === 'VERIFIED');
+  const v3 = verifyClaim('выдуманный', [rec]);
+  pass &= ok('выдуманный инструмент UNVERIFIED', v3.verdict === 'UNVERIFIED');
+  const tampered = { ...rec, result: 'подделка' };
+  pass &= ok('подделка TAMPERED', verifyReceipt(tampered, cfg).verdict === 'TAMPERED');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-'));
+  const marker = path.join(tmp, 'restarted.txt');
+  try {
+    const rcfg = {
+      ...cfg,
+      restart_command: process.execPath,
+      restart_args: ['-e', "require('fs').writeFileSync(process.env.LG_MARK,'ok')"],
+    };
+    const prev = process.env.LG_MARK;
+    process.env.LG_MARK = marker;
+    const run = runRestartCommand(rcfg, { detached: false, cwd: tmp });
+    if (prev === undefined) delete process.env.LG_MARK;
+    else process.env.LG_MARK = prev;
+    pass &= ok('watchdog рестарт процесса', run.ran && fs.existsSync(marker) && fs.readFileSync(marker, 'utf8') === 'ok');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  if (pass) {
+    console.log('selftest passed');
+    process.exitCode = 0;
+  } else {
+    console.log('selftest FAILED');
+    process.exitCode = 1;
+  }
+}
+
+function main(argv = process.argv.slice(2), dir = __dirname) {
+  const cmd = argv[0] || 'status';
+  const args = argv.slice(1);
+  const cfg = loadConfig(dir);
+  if (cmd === 'selftest') return selftest();
+  if (cmd === 'status') return cmdStatus(dir, cfg);
+  if (cmd === 'enforce') return cmdEnforce(dir, cfg);
+  if (cmd === 'begin') return cmdBegin(dir, cfg, args);
+  if (cmd === 'heartbeat') return cmdHeartbeat(dir, cfg);
+  if (cmd === 'receipt') return cmdReceipt(dir, cfg, args);
+  if (cmd === 'verify-claim') return cmdVerify(dir, cfg, args);
+  if (cmd === 'classify') return cmdClassify(dir, cfg, args);
+  if (cmd === 'on-user') return cmdOnUser(dir, cfg, args);
+  if (cmd === 'verify-criterion') return cmdVerifyCriterion(dir, cfg, args);
+  if (cmd === 'tick') return cmdTick(dir, cfg);
+  if (cmd === 'watchdog') return cmdWatchdog(dir, cfg, args);
+  console.log('usage: node .agent/loop-guard.mjs <selftest|status|enforce|begin|heartbeat|receipt|classify|watchdog|on-user>');
+  process.exitCode = 1;
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) main();

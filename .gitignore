@@ -26,3 +26,10 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# loop-guard runtime
+.agent/loop-guard.state.json
+.agent/loop-guard.heartbeat
+.agent/receipts.jsonl
+.agent/restart.ticket.json
+.agent/LOOPS.md
