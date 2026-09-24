@@ -157,6 +157,45 @@ function Get-Note($obj, [string]$Name, $Fallback = $null) {
   return $Fallback
 }
 
+function Token-Of($obj) {
+  $life = 0
+  $week = 0
+  $free = 0
+  try { $life = [int64](Get-Note $obj 'lifetimeTokens' 0) } catch {}
+  try { $week = [int64](Get-Note $obj 'usedInWeek' 0) } catch {}
+  try { $free = [int64](Get-Note $obj 'usedInFreeWindow' 0) } catch {}
+  if ($week + $free -gt $life) { return ($week + $free) }
+  return $life
+}
+
+function Add-UserFromReport($state, $rep) {
+  $email = [string](Get-Note $rep 'email' '')
+  $label = [string](Get-Note $rep 'deviceLabel' '')
+  $id = [string](Get-Note $rep 'userId' '')
+  if (-not $email) {
+    $slug = $(if ($id) { $id } elseif ($label) { $label } else { [guid]::NewGuid().ToString('N').Substring(0, 8) })
+    $slug = ($slug -replace '[^\w.-]+', '').Substring(0, [Math]::Min(24, $slug.Length))
+    if (-not $slug) { $slug = 'copy' }
+    $email = 'copy.' + $slug + '@local.fedor'
+  }
+  $name = $(if ($label) { $label } elseif ($email.Contains('@')) { $email.Split('@')[0] } else { 'Копия' })
+  $now = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+  $hit = [pscustomobject]@{
+    id = $(if ($id) { $id } else { 'usr_' + [guid]::NewGuid().ToString('N').Substring(0, 10) })
+    email = $email
+    name = $name
+    planId = 'free'
+    lifetimeTokens = Token-Of $rep
+    usedInWeek = [int64](Get-Note $rep 'usedInWeek' 0)
+    usedInFreeWindow = [int64](Get-Note $rep 'usedInFreeWindow' 0)
+    lastSeenAt = $(if (Get-Note $rep 'lastSeenAt' $null) { [int64](Get-Note $rep 'lastSeenAt' $now) } else { $now })
+    lastTokenReportAt = $now
+    deviceLabel = $label
+  }
+  $state.users = @(As-List $state.users) + $hit
+  return $hit
+}
+
 function When-Text($ts) {
   if (-not $ts) { return 'net vizita' }
   try {
@@ -167,7 +206,7 @@ function When-Text($ts) {
 function Sort-Users($users, $by) {
   $list = @(As-List $users)
   if ($by -eq 'lastSeen') { return @($list | Sort-Object { [int64]($_.lastSeenAt) } -Descending) }
-  if ($by -eq 'tokens') { return @($list | Sort-Object { [int64]($_.lifetimeTokens) } -Descending) }
+  if ($by -eq 'tokens') { return @($list | Sort-Object { Token-Of $_ } -Descending) }
   return @($list | Sort-Object { [string]$_.name }, { [string]$_.email })
 }
 
@@ -184,10 +223,11 @@ function Ingest-Replies($state) {
         break
       }
     }
-    if (-not $hit) { continue }
-    $cur = 0; try { $cur = [int64](Get-Note $hit 'lifetimeTokens' 0) } catch {}
-    $got = 0; try { $got = [int64](Get-Note $rep 'lifetimeTokens' 0) } catch {}
+    if (-not $hit) { $hit = Add-UserFromReport $state $rep }
+    $cur = Token-Of $hit
+    $got = Token-Of $rep
     if ($got -gt $cur) { Set-Note $hit 'lifetimeTokens' $got }
+    elseif ($cur -gt 0) { Set-Note $hit 'lifetimeTokens' $cur }
     $seen = Get-Note $rep 'lastSeenAt' $null
     if ($seen) { Set-Note $hit 'lastSeenAt' ([int64]$seen) }
     Set-Note $hit 'lastTokenReportAt' ([DateTimeOffset]::Now.ToUnixTimeMilliseconds())
@@ -207,14 +247,25 @@ function Apply-LocalCopy($state) {
       if ($copy.email -and $u.email -eq $copy.email) { $match = $true }
       if ($copy.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $copy.deviceLabel) { $match = $true }
       if (-not $match) { continue }
-      $cur = 0; try { $cur = [int64](Get-Note $u 'lifetimeTokens' 0) } catch {}
-      $got = 0; try { $got = [int64](Get-Note $copy 'lifetimeTokens' 0) } catch {}
+      $cur = Token-Of $u
+      $got = Token-Of $copy
       if ($got -gt $cur) { Set-Note $u 'lifetimeTokens' $got }
+      elseif ($cur -gt 0) { Set-Note $u 'lifetimeTokens' $cur }
       $seen = Get-Note $copy 'lastSeenAt' $null
       if ($seen) { Set-Note $u 'lastSeenAt' ([int64]$seen) }
     } catch {
       Write-Log ('copy-row: ' + $_.Exception.Message)
     }
+  }
+  $already = $false
+  foreach ($u in (As-List $state.users)) {
+    if (($copy.userId -and $u.id -eq $copy.userId) -or ($copy.email -and $u.email -eq $copy.email) -or ($copy.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $copy.deviceLabel)) {
+      $already = $true
+      break
+    }
+  }
+  if (-not $already -and ((Token-Of $copy) -gt 0 -or $copy.email -or $copy.userId)) {
+    [void](Add-UserFromReport $state $copy)
   }
 }
 
@@ -264,6 +315,12 @@ function Fill-Lists {
     }
     $state = Read-State
     Apply-LocalCopy $state
+    [void](Ingest-Replies $state)
+    foreach ($u in (As-List $state.users)) {
+      $tok = Token-Of $u
+      if ($tok -gt 0) { Set-Note $u 'lifetimeTokens' $tok }
+    }
+    Write-State $state
     $users = Sort-Users (As-List $state.users) $global:FedorHub.Sort
     $invoices = @(As-List $state.invoices)
     $global:FedorHub.Users.Items.Clear()
@@ -279,7 +336,7 @@ function Fill-Lists {
       foreach ($u in $users) {
         $name = [string]($(if ($u.name) { $u.name } else { $u.email }))
         $email = [string]$u.email
-        $tok = 0; try { $tok = [int64]$u.lifetimeTokens } catch {}
+        $tok = Token-Of $u
         $plan = [string]($(if ($u.planId) { $u.planId } else { 'free' }))
         $lab = [string]$u.deviceLabel
         $seen = When-Text $u.lastSeenAt

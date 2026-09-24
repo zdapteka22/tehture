@@ -181,9 +181,9 @@ export async function POST(request: Request) {
         type: "token-report",
         userId: user.id,
         email: user.email,
-        lifetimeTokens: Number(body.lifetimeTokens || user.lifetimeTokens || 0),
-        usedInWeek: body.usedInWeek,
-        usedInFreeWindow: body.usedInFreeWindow,
+        lifetimeTokens: Number(body.lifetimeTokens ?? user.lifetimeTokens ?? 0),
+        usedInWeek: body.usedInWeek ?? user.usedInWeek,
+        usedInFreeWindow: body.usedInFreeWindow ?? user.usedInFreeWindow,
         lastSeenAt: body.lastSeenAt || Date.now(),
         t: Date.now(),
       });

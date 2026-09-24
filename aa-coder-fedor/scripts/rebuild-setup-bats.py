@@ -114,6 +114,10 @@ INJECT = {
     "lib/prompt.ts": ROOT / "lib" / "prompt.ts",
     "lib/fyodor/handle.ts": ROOT / "lib" / "fyodor" / "handle.ts",
     "lib/crew/run.ts": ROOT / "lib" / "crew" / "run.ts",
+    "lib/commerce/store.ts": ROOT / "lib" / "commerce" / "store.ts",
+    "lib/commerce/token-sync.ts": ROOT / "lib" / "commerce" / "token-sync.ts",
+    "app/api/hub/route.ts": ROOT / "app" / "api" / "hub" / "route.ts",
+    "app/api/chat/route.ts": ROOT / "app" / "api" / "chat" / "route.ts",
 }
 NEXT_OVERRIDE = Path(os.environ.get("FEDOR_NEXT_OVERRIDE") or ROOT / ".next")
 

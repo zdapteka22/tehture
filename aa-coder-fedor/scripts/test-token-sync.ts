@@ -50,6 +50,21 @@ async function main() {
       lastSeenAt: Date.now() + 1000,
       t: Date.now(),
     });
+    const created = applyTokenReport({
+      type: "token-report",
+      email: "copy.pc@local.fedor",
+      deviceLabel: "ПК копии",
+      usedInWeek: 2500,
+      lastSeenAt: Date.now(),
+      t: Date.now(),
+    });
+    ok("отчёт без учётки создаёт пользователя", Boolean(created?.id));
+    ok("токены с окна попадают в учёт", (created?.lifetimeTokens || 0) >= 2500);
+    const listed = listUsers("test-admin", "tokens");
+    ok(
+      "в списке видна копия с токенами",
+      (listed.users.find((u) => u.email === "copy.pc@local.fedor")?.lifetimeTokens || 0) >= 2500,
+    );
     const byVisit = listUsers("test-admin", "lastSeen");
     ok("сорт по визиту: Борис свежее", byVisit.users[0].email === "boris@local.fedor");
 

@@ -1,6 +1,6 @@
 import { IS_FREE_EDITION } from "@/lib/brand";
 import { meterPaidChatTurn, quotaOf, userByToken } from "@/lib/commerce/store";
-import { answerLocalAsks, flushDailyIfDue, pendingAskIds } from "@/lib/commerce/token-sync";
+import { answerLocalAsks, flushDailyIfDue, pendingAskIds, pushRemoteTokenReport } from "@/lib/commerce/token-sync";
 import { trimHistoryForModel } from "@/lib/chat-store";
 import { ensureWorkspace, getWorkspaceRoot } from "@/lib/host-fs";
 import { resolveChatSettings } from "@/lib/providers";
@@ -89,8 +89,9 @@ export async function POST(request: Request) {
             usedInFreeWindow: me.usedInFreeWindow,
             lastTokenReportAt: me.lastTokenReportAt,
           };
-          if (pendingAskIds().includes(me.id)) answerLocalAsks(payload);
+          answerLocalAsks(payload);
           flushDailyIfDue(payload);
+          void pushRemoteTokenReport({ token: accountToken, ...payload, lastSeenAt: Date.now() });
         }
       } catch {
         // token report must not block chat

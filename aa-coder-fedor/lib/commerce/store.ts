@@ -343,14 +343,26 @@ export function userByToken(token: string | undefined | null): HubUser | null {
   return user ? refreshWindows(user) : null;
 }
 
+export function spentTokens(user: {
+  lifetimeTokens?: number;
+  usedInWeek?: number;
+  usedInFreeWindow?: number;
+}): number {
+  const life = Number(user.lifetimeTokens || 0);
+  const windows = Number(user.usedInWeek || 0) + Number(user.usedInFreeWindow || 0);
+  return Math.max(0, life, windows);
+}
+
 export function publicUser(user: HubUser) {
+  const life = spentTokens(user);
+  if ((user.lifetimeTokens || 0) < life) user.lifetimeTokens = life;
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     planId: user.planId,
     quota: quotaOf(user),
-    lifetimeTokens: user.lifetimeTokens || 0,
+    lifetimeTokens: life,
     lastSeenAt: user.lastSeenAt || 0,
     lastTokenReportAt: user.lastTokenReportAt || 0,
     usedInWeek: user.usedInWeek || 0,
@@ -384,13 +396,21 @@ export function applyTokenReport(report: TokenReport | {
   lastSeenAt?: number;
 }): HubUser | null {
   return withLock((state) => {
-    const user = state.users.find(
+    let user = state.users.find(
       (item) =>
         (report.userId && item.id === report.userId) ||
         (report.email && item.email === normalizeEmail(String(report.email))) ||
         (report.deviceLabel && item.deviceLabel && item.deviceLabel === report.deviceLabel),
     );
-    if (!user) return null;
+    if (!user) {
+      const email = report.email ? normalizeEmail(String(report.email)) : "";
+      const fallback = email && email.includes("@") ? email : `copy.${String(report.userId || report.deviceLabel || Date.now()).replace(/[^\w.-]+/g, "").slice(0, 24)}@local.fedor`;
+      user = findOrCreateUser(state, {
+        email: fallback,
+        name: report.deviceLabel || (email ? email.split("@")[0] : "Копия"),
+        deviceLabel: report.deviceLabel,
+      });
+    }
     if (typeof report.lifetimeTokens === "number") {
       user.lifetimeTokens = Math.max(user.lifetimeTokens || 0, report.lifetimeTokens);
     }
@@ -400,6 +420,7 @@ export function applyTokenReport(report: TokenReport | {
     if (typeof report.usedInFreeWindow === "number") {
       user.usedInFreeWindow = Math.max(user.usedInFreeWindow || 0, report.usedInFreeWindow);
     }
+    user.lifetimeTokens = spentTokens(user);
     user.lastSeenAt = Math.max(user.lastSeenAt || 0, report.lastSeenAt || Date.now());
     user.lastTokenReportAt = Date.now();
     return { ...user };

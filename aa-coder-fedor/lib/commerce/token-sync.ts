@@ -136,6 +136,40 @@ export function dailyDue(lastTokenReportAt?: number, now = Date.now()): boolean 
   return now - lastTokenReportAt >= DAY_MS;
 }
 
+export async function pushRemoteTokenReport(input: {
+  token?: string;
+  userId?: string;
+  email?: string;
+  lifetimeTokens: number;
+  usedInWeek?: number;
+  usedInFreeWindow?: number;
+  lastSeenAt?: number;
+}): Promise<boolean> {
+  const raw = String(process.env.FEDOR_HUB_URL || "").trim().replace(/\/$/, "");
+  if (!raw) return false;
+  const token = String(input.token || process.env.FEDOR_ACCOUNT_TOKEN || "").trim();
+  try {
+    const res = await fetch(`${raw}/api/hub`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "x-fedor-account": token } : {}),
+      },
+      body: JSON.stringify({
+        action: "report-tokens",
+        token,
+        lifetimeTokens: input.lifetimeTokens,
+        usedInWeek: input.usedInWeek,
+        usedInFreeWindow: input.usedInFreeWindow,
+        lastSeenAt: input.lastSeenAt || Date.now(),
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function flushDailyIfDue(input: {
   userId?: string;
   email?: string;
