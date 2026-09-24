@@ -38,6 +38,18 @@ node .agent/loop-guard.mjs enforce
 node .agent/loop-guard.mjs watchdog --once
 ```
 
-`enforce` как раньше: `CONTINUE` → код 2, `DONE` → 0, `BLOCKED` → 1.
+`enforce` как раньше: `CONTINUE` → код 2 (`process.exit(2)`, не `exitCode`), `DONE` → 0, `BLOCKED` → 1.
+
+Обёртка всегда зовёт `goal-brain check --task <текущая задача>`. Без `--task` сторож не видит смену цели.
+
+Код 2 в cmd.exe: `&` сбрасывает `%ERRORLEVEL%`. Мерить так:
+
+```
+cmd /v:on /c "node .agent/loop-guard.mjs enforce & echo !ERRORLEVEL!"
+```
+
+`check.bat` / `check-guard.bat`: без `setlocal`, `MAX_OK=1` до проверок, печатают `RESULT` и `EXITCODE: 0|1`. `--selftest` → `SELFTEST: OK`.
+
+`LOOPS.md` пишет Node в UTF-8. Журнал не должен содержать U+FFFD.
 
 Источники паттернов (реальные репозитории, не выдумка): `.agent/RESEARCH.md`.

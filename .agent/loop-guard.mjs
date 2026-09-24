@@ -282,9 +282,23 @@ function writeState(dir, state) {
   fs.writeFileSync(paths(dir).state, JSON.stringify(state, null, 2), 'utf8');
 }
 
+export function sanitizeLogText(text) {
+  return String(text || '')
+    .replace(/pat\uFFFD+h/gi, 'path')
+    .replace(/zamen\uFFFD+/gi, 'замена')
+    .replace(/\uFFFD+/g, '');
+}
+
 function appendLog(dir, line) {
   const p = paths(dir).log;
-  fs.appendFileSync(p, line + '\n', 'utf8');
+  let prev = '';
+  try {
+    prev = fs.readFileSync(p, { encoding: 'utf8' });
+  } catch {
+    prev = '';
+  }
+  const next = sanitizeLogText(`${prev}${line}\n`);
+  fs.writeFileSync(p, next, { encoding: 'utf8' });
 }
 
 function writeRestartTicket(dir, cls, state) {
@@ -454,7 +468,70 @@ function cmdStatus(dir, cfg) {
   printStatus(readState(dir, cfg));
 }
 
+function cmdReset(dir, cfg) {
+  const p = paths(dir);
+  for (const f of [p.state, p.heartbeat, p.receipts, path.join(dir, 'restart.ticket.json'), path.join(dir, 'goal-brain.state.json')]) {
+    try {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    } catch {
+      /* reset best-effort */
+    }
+  }
+  writeState(dir, emptyState(cfg));
+  console.log('RESET ok');
+}
+
+function cmdLog(dir, cfg, args) {
+  const text = args.filter((a) => !a.startsWith('--')).join(' ') || argVal(args, 'text') || '';
+  appendLog(dir, text);
+  console.log('LOG=' + paths(dir).log);
+}
+
+function readGoalFile(dir) {
+  try {
+    return fs.readFileSync(path.join(dir, 'goal.txt'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function findGoalBrain(dir) {
+  const candidates = [
+    path.join(dir, 'goal-brain.mjs'),
+    path.join(__dirname, 'goal-brain.mjs'),
+    path.join(ROOT, 'aa-coder-fedor', 'coder-v2', 'src', 'agent', 'goal-brain.mjs'),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || '';
+}
+
+/** Вызов сторожа цели С текстом текущей задачи. Без --task баг 1 не работает. */
+export function autoGoalVerdict(dir) {
+  const state = readState(dir, loadConfig(dir));
+  const task = String(state.goal || readGoalFile(dir) || process.env.FEDOR_GOAL || '').trim();
+  const brain = findGoalBrain(dir);
+  const statePath = path.join(dir, 'goal-brain.state.json');
+  if (!brain) {
+    return { out: 'CONTINUE no goal-brain', verdict: 'CONTINUE', stale: false, task };
+  }
+  const args = ['check', '--state', statePath, '--task', task];
+  const proc = spawnSync(process.execPath, [brain, ...args], {
+    encoding: 'utf8',
+    timeout: 8000,
+    windowsHide: true,
+  });
+  const out = `${proc.stdout || ''}${proc.stderr || ''}`.trim();
+  const verdict = ((out.match(/^VERDICT=(\w+)/m) || [])[1] || 'CONTINUE').toUpperCase();
+  const stale = /^STALE=1/m.test(out);
+  return { out, verdict, stale, task, status: proc.status };
+}
+
 function cmdEnforce(dir, cfg) {
+  const brain = autoGoalVerdict(dir);
+  if (brain.stale || (brain.verdict === 'CONTINUE' && /STALE=1/.test(brain.out))) {
+    console.log(brain.out);
+    console.log('ACTION=НЕ ОСТАНАВЛИВАТЬСЯ: сделай следующий ход.');
+    process.exit(EXIT.CONTINUE);
+  }
   const state = readState(dir, cfg);
   const cls = classifyStop(state, {
     type: 'stop-attempt',
@@ -626,22 +703,70 @@ function selftest() {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
+  const tmpStale = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-stale-'));
+  try {
+    fs.writeFileSync(
+      path.join(tmpStale, 'goal-brain.state.json'),
+      JSON.stringify({
+        goal: 'вчерашняя цель про клик',
+        done_when: ['TOKEN_READY'],
+        evidence: [{ text: 'TOKEN_READY vk1.a' }],
+        lastCheck: new Date().toISOString(),
+        lastVerdict: 'DONE',
+      }),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(tmpStale, 'loop-guard.state.json'), JSON.stringify({ ...emptyState(cfg), goal: 'новая задача: оплата картой' }), 'utf8');
+    const foreign = autoGoalVerdict(tmpStale);
+    pass &= ok('обёртка: чужая задача -> STALE CONTINUE', foreign.stale && foreign.verdict === 'CONTINUE');
+    fs.writeFileSync(path.join(tmpStale, 'loop-guard.state.json'), JSON.stringify({ ...emptyState(cfg), goal: 'вчерашняя цель про клик' }), 'utf8');
+    const own = autoGoalVerdict(tmpStale);
+    pass &= ok('обёртка: своя задача -> DONE', own.verdict === 'DONE' && !own.stale);
+
+    fs.writeFileSync(path.join(tmpStale, 'loop-guard.state.json'), JSON.stringify({ ...emptyState(cfg), goal: 'новая задача: оплата картой' }), 'utf8');
+    const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'enforce', `--dir=${tmpStale}`], {
+      cwd: tmpStale,
+      encoding: 'utf8',
+      timeout: 8000,
+      windowsHide: true,
+    });
+    pass &= ok('CONTINUE -> process.exit(2)', child.status === 2);
+    pass &= ok('CONTINUE не через exitCode', child.status === 2 && /НЕ ОСТАНАВЛИВАТЬСЯ/.test(`${child.stdout || ''}${child.stderr || ''}`));
+  } finally {
+    fs.rmSync(tmpStale, { recursive: true, force: true });
+  }
+
+  const tmpLog = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-log-'));
+  try {
+    fs.writeFileSync(path.join(tmpLog, 'LOOPS.md'), 'pat\uFFFDh zamen\uFFFD\n', { encoding: 'utf8' });
+    appendLog(tmpLog, '- замена path');
+    const raw = fs.readFileSync(path.join(tmpLog, 'LOOPS.md'), { encoding: 'utf8' });
+    const bad = (raw.match(/\uFFFD/g) || []).length;
+    pass &= ok('LOOPS.md UTF-8 без U+FFFD', bad === 0 && raw.includes('path') && raw.includes('замена'));
+  } finally {
+    fs.rmSync(tmpLog, { recursive: true, force: true });
+  }
+
   if (pass) {
     console.log('selftest passed');
-    process.exitCode = 0;
+    process.exit(0);
   } else {
     console.log('selftest FAILED');
-    process.exitCode = 1;
+    process.exit(1);
   }
 }
 
 function main(argv = process.argv.slice(2), dir = __dirname) {
   const cmd = argv[0] || 'status';
   const args = argv.slice(1);
+  const dirArg = argVal(argv, 'dir') || argVal(args, 'dir');
+  if (dirArg) dir = path.resolve(dirArg);
   const cfg = loadConfig(dir);
   if (cmd === 'selftest') return selftest();
   if (cmd === 'status') return cmdStatus(dir, cfg);
   if (cmd === 'enforce') return cmdEnforce(dir, cfg);
+  if (cmd === 'reset') return cmdReset(dir, cfg);
+  if (cmd === 'log') return cmdLog(dir, cfg, args);
   if (cmd === 'begin') return cmdBegin(dir, cfg, args);
   if (cmd === 'heartbeat') return cmdHeartbeat(dir, cfg);
   if (cmd === 'receipt') return cmdReceipt(dir, cfg, args);
@@ -651,7 +776,7 @@ function main(argv = process.argv.slice(2), dir = __dirname) {
   if (cmd === 'verify-criterion') return cmdVerifyCriterion(dir, cfg, args);
   if (cmd === 'tick') return cmdTick(dir, cfg);
   if (cmd === 'watchdog') return cmdWatchdog(dir, cfg, args);
-  console.log('usage: node .agent/loop-guard.mjs <selftest|status|enforce|begin|heartbeat|receipt|classify|watchdog|on-user>');
+  console.log('usage: node .agent/loop-guard.mjs <selftest|status|enforce|begin|heartbeat|receipt|classify|watchdog|on-user|reset|log>');
   process.exitCode = 1;
 }
 

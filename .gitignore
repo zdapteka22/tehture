@@ -33,3 +33,4 @@ yarn-error.log*
 .agent/receipts.jsonl
 .agent/restart.ticket.json
 .agent/LOOPS.md
+.agent/goal-brain.state.json

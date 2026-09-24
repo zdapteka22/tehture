@@ -26,6 +26,7 @@
     "test:crew": "npx tsx scripts/test-crew.ts",
     "test:fyodor": "npx tsx scripts/test-fyodor.ts",
     "test:stop": "npx tsx scripts/test-stop-loop.ts",
+    "test:goal-stale": "npx tsx scripts/test-goal-stale.ts",
     "test:until-goal": "npx tsx scripts/test-until-goal.ts",
     "test:free-sku": "npx tsx scripts/test-free-sku.ts",
     "test:windows-keep-going": "python3 scripts/test-windows-keep-going.py",
