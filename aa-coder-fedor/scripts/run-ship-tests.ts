@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 const SHIP = [
   "test:guard",
   "test:stop",
+  "test:until-goal",
   "test:fyodor",
   "test:crew",
   "test:agent20",

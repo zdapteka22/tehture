@@ -25,6 +25,7 @@
     "test:crew": "npx tsx scripts/test-crew.ts",
     "test:fyodor": "npx tsx scripts/test-fyodor.ts",
     "test:stop": "npx tsx scripts/test-stop-loop.ts",
+    "test:until-goal": "npx tsx scripts/test-until-goal.ts",
     "test:guard": "npx tsx scripts/test-guard.ts",
     "test:router": "npx tsx scripts/test-model-router.ts",
     "test:local-llm": "npx tsx scripts/test-local-llm.ts",

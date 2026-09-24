@@ -113,7 +113,9 @@ INJECT = {
     "lib/ngp/index.ts": ROOT / "lib" / "ngp" / "index.ts",
     "lib/prompt.ts": ROOT / "lib" / "prompt.ts",
     "lib/fyodor/handle.ts": ROOT / "lib" / "fyodor" / "handle.ts",
+    "lib/fyodor/until-goal.ts": ROOT / "lib" / "fyodor" / "until-goal.ts",
     "lib/crew/run.ts": ROOT / "lib" / "crew" / "run.ts",
+    "lib/crew/graph.ts": ROOT / "lib" / "crew" / "graph.ts",
     "lib/commerce/store.ts": ROOT / "lib" / "commerce" / "store.ts",
     "lib/commerce/token-sync.ts": ROOT / "lib" / "commerce" / "token-sync.ts",
     "app/api/hub/route.ts": ROOT / "app" / "api" / "hub" / "route.ts",
@@ -124,6 +126,58 @@ NEXT_OVERRIDE = Path(os.environ.get("FEDOR_NEXT_OVERRIDE") or ROOT / ".next")
 
 SKIP_NEXT_PARTS = {"cache", "types", "diagnostics"}
 SKIP_NEXT_NAMES = {"trace", "trace-build"}
+
+
+def patch_keep_going_chunk(data: bytes) -> bytes:
+    """Packed Next runs this chunk, not the TS sources. Keep 1-2 moves from ending a live job."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_KEEP_GOING" in text:
+        return data
+    start = text.find(
+        'if((0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)||a.usedTools.some(a=>b4.test(String(a||"")))){let d,e;return'
+    )
+    end = text.find("}return!!(0,bE.O2)(a.userText)&&(", start) if start >= 0 else -1
+    if start < 0 or end < 0 or "страница открыта" not in text[start:end]:
+        if "страница открыта" in text:
+            raise SystemExit("keep-going chunk marker missing")
+        return data
+    live_new = (
+        'if((0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)'
+        '||a.usedTools.some(a=>b4.test(String(a||"")))){/*FEDOR_KEEP_GOING*/'
+        'let workMoves=a.usedTools.filter(t=>String(t||"").trim()&&!b5.test(String(t||""))).length;'
+        'if(b7(a.userText)||/(сообществ|групп|паблик|oauth|access_token|заполн|отправ|войди|авториз|зарегистри|опублик)/i.test(a.userText)){'
+        'if(workMoves<3)return!0;let d,e;return b=a.userText,c=a.content,d=String(b||""),'
+        '!(!(!(e=String(c||"")).trim()||bz(e)||(0,bE.e5)(e)||(0,bE.dE)(e)||(0,bE.GC)(e)||b6(e)'
+        '||/(не сработал|не открыл|не появил|не отрисов|не могу|пришлите|вставь(те)? токен|посмотрите|напишите|что видно|окно не|модалка не|не нашёл|не нашел|жду вас)/i.test(e))'
+        '&&(/(сообществ|групп|паблик|\\bвк\\b|вконтакте|\\bvk\\.(com|ru)\\b)/i.test(d)&&b7(d)'
+        '?/["\']?group_id["\']?\\s*[:=]\\s*\\d+|vk\\.(com|ru)\\/(club|public)\\d+|сообщество создано|создал сообществ|"type"\\s*:\\s*"(group|page|event)"/i.test(e)'
+        ':/(токен|oauth|access_token)/i.test(d)&&!/(сообществ|групп|паблик)/i.test(d)'
+        '?/access_token:|TOKEN_READY|токен получен|vk1\\.a\\./i.test(e)'
+        ':/(сохранил|отправил|создано\\b|файл записан|clicked and saved|вошёл|вошел|зарегистрирован|опубликован)/i.test(e)))}'
+        'if(workMoves<1)return!0;}'
+        'if((0,bE.O2)(a.userText)&&((0,bE.BP)(a.userText)||(0,bE.cP)(a.userText))'
+        '&&a.usedTools.filter(t=>String(t||"").trim()&&!b5.test(String(t||""))).length<3'
+        '&&!/(текстов|заметк|\\.txt\\b|\\.bat\\b|бат|на рабоч|блокнот)/i.test(a.userText)'
+        '&&!((0,bE.KW)(a.userText)&&!(0,bE.BP)(a.userText)))return!0;'
+    )
+    text = text[:start] + live_new + text[end + 1 :]
+    if "Один-два хода" not in text:
+        text = text.replace(
+            "Стоп. Ты описал шаг словами вместо вызова инструмента.",
+            "Стоп. Ты описал шаг словами вместо вызова инструмента. Один-два хода и слово «готово» — не конец.",
+            1,
+        )
+    return text.encode("utf-8")
+
+
+def maybe_patch_packed(rel: str, data: bytes) -> bytes:
+    norm = rel.replace("\\", "/")
+    if norm.endswith("server/chunks/690.js"):
+        return patch_keep_going_chunk(data)
+    return data
 
 
 def inject_tree(dest: zipfile.ZipFile, written: set[str], root: Path, prefix: str) -> int:
@@ -139,7 +193,7 @@ def inject_tree(dest: zipfile.ZipFile, written: set[str], root: Path, prefix: st
         if path.name in SKIP_NEXT_NAMES:
             continue
         rel = f"{prefix}/{path.relative_to(root).as_posix()}"
-        dest.writestr(rel, path.read_bytes())
+        dest.writestr(rel, maybe_patch_packed(rel, path.read_bytes()))
         written.add(rel)
         count += 1
     return count
@@ -167,7 +221,7 @@ def patch_zip(zip_bytes: bytes, sku: str = "paid") -> bytes:
                 data = with_baked_key(ELECTRON_MAIN.read_bytes())
             else:
                 data = with_baked_key(data)
-            dest.writestr(info, data)
+            dest.writestr(info, maybe_patch_packed(rel, data))
             written.add(rel)
         for rel, data in inject.items():
             if rel in written:
