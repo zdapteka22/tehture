@@ -217,9 +217,11 @@ export async function handleFyodor(request: FyodorHandleRequest): Promise<Fyodor
 
 async function handleFyodorInner(request: FyodorHandleRequest): Promise<FyodorHandleResult> {
   throwIfAborted(request.signal);
-  observeNgpUserText(request.userText);
   const repo = pathResolve(request.repo || getWorkspaceRoot());
   const send = request.send;
+  const ngp = observeNgpUserText(request.userText);
+  if (ngp === "enabled") send?.("status", { text: "новая память включена" });
+  if (ngp === "disabled") send?.("status", { text: "новая память выключена" });
   const jobId = request.jobId?.trim() || undefined;
   if (looksLikeStopCommand(request.userText)) {
     send?.("text", { delta: "Остановлено. Жду следующую задачу." });

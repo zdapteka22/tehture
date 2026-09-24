@@ -1,14 +1,29 @@
-import { isNgpOn } from "./enabled";
+import { disableNgp, enableNgp, isNgpOn } from "./enabled";
 import { extractNgpFromText } from "./extract";
 import { NGP_ENTROPY_CHECK, NGP_VALUES } from "./values";
 import { recallNgp } from "./store";
 
-export function observeNgpUserText(text: string): void {
-  if (!isNgpOn()) return;
+export type NgpObserve = "enabled" | "disabled" | "noted" | "off";
+
+const ENABLE_RE = /(?:включи(?:ть)?|turn on|enable)\s+(?:новую\s+память|ngp|новую\s+версию)/i;
+const DISABLE_RE = /(?:выключи(?:ть)?|отключи(?:ть)?|turn off|disable)\s+(?:новую\s+память|ngp|новую\s+версию)/i;
+
+export function observeNgpUserText(text: string): NgpObserve {
+  const raw = String(text || "");
   try {
-    extractNgpFromText(text);
+    if (ENABLE_RE.test(raw)) {
+      enableNgp();
+      return "enabled";
+    }
+    if (DISABLE_RE.test(raw)) {
+      disableNgp();
+      return "disabled";
+    }
+    if (!isNgpOn()) return "off";
+    extractNgpFromText(raw);
+    return "noted";
   } catch {
-    // NGP must never break the ready coder
+    return isNgpOn() ? "noted" : "off";
   }
 }
 
