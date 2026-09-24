@@ -1117,16 +1117,19 @@ try {
   }
 
   $agentDir = Join-Path -Path $workspace -ChildPath '.agent'
+  $bundledPack = Join-Path -Path $Root -ChildPath '.agent'
   $bundledAgent = Join-Path -Path $Root -ChildPath 'coder-v2\src\agent'
-  if (Test-Path -LiteralPath $bundledAgent) {
-    New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
-    foreach ($name in @('goal-brain.mjs', 'loop-guard.mjs')) {
-      $src = Join-Path -Path $bundledAgent -ChildPath $name
+  New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
+  foreach ($name in @('goal-brain.mjs', 'loop-guard.mjs', 'loop-guard.json', 'check.bat', 'check-guard.bat')) {
+    $src = $null
+    $packSrc = Join-Path -Path $bundledPack -ChildPath $name
+    $kitSrc = Join-Path -Path $bundledAgent -ChildPath $name
+    if (Test-Path -LiteralPath $packSrc) { $src = $packSrc }
+    elseif (Test-Path -LiteralPath $kitSrc) { $src = $kitSrc }
+    if ($src) {
       $dst = Join-Path -Path $agentDir -ChildPath $name
-      if ((Test-Path -LiteralPath $src) -and -not (Test-Path -LiteralPath $dst)) {
-        Copy-Item -LiteralPath $src -Destination $dst -Force
-        Write-Host ('      goal-brain: ' + $name)
-      }
+      Copy-Item -LiteralPath $src -Destination $dst -Force
+      Write-Host ('      goal-brain: ' + $name)
     }
   }
 
