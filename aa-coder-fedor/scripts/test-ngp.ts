@@ -43,7 +43,8 @@ async function main() {
 
   try {
     ok("on by default", isNgpOn() === true);
-    ok("prompt fills when on", /<values>/.test(getNgpPromptBlock("как писать код")));
+    ok("prompt fills on first call without enable", /<values>/.test(getNgpPromptBlock("как писать код")) && /ON by default/.test(getNgpPromptBlock("как писать код")));
+    ok("enabled file appears without chat", existsSync(ngpSwitchFile()));
     ok("ordinary text notes when on", observeNgpUserText("мне нравится короткие функции и тесты") === "noted");
 
     const promptSrc = readFileSync(path.join(process.cwd(), "lib/prompt.ts"), "utf8");

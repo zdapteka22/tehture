@@ -1,4 +1,4 @@
-export { disableNgp, enableNgp, isNgpOn, ngpOffFile, ngpSwitchFile } from "./enabled";
+export { disableNgp, enableNgp, ensureNgpDefaultOn, isNgpOn, ngpOffFile, ngpSwitchFile } from "./enabled";
 export { extractNgpFromText } from "./extract";
 export { getNgpPromptBlock, observeNgpUserText } from "./prompt";
 export type { NgpObserve } from "./prompt";

@@ -19,7 +19,7 @@ function envOverride(): boolean | null {
   return null;
 }
 
-/** Common version: on unless the user turned it off. Super Memory and clicks stay anyway. */
+/** Common version: full memory is ON from the first launch. Super Memory and clicks stay anyway. */
 export function isNgpOn(): boolean {
   const forced = envOverride();
   if (forced !== null) return forced;
@@ -27,6 +27,20 @@ export function isNgpOn(): boolean {
     if (existsSync(ngpOffFile())) return false;
   } catch {
     return true;
+  }
+  return true;
+}
+
+/** Persist the default-on marker so the first message already has full memory. */
+export function ensureNgpDefaultOn(): boolean {
+  if (!isNgpOn()) return false;
+  try {
+    mkdirSync(ngpRoot(), { recursive: true });
+    if (!existsSync(ngpSwitchFile())) {
+      writeFileSync(ngpSwitchFile(), "on\n", "utf8");
+    }
+  } catch {
+    // still on in memory
   }
   return true;
 }

@@ -81,6 +81,9 @@ def main() -> None:
     ok("skill ledger stays", "getSkillPromptBlock" in prompt and "click_kit" in prompt)
     packed = b"".join(zf.read(name) for name in zf.namelist() if name.replace("\\", "/").startswith(".next/server/chunks/") and name.endswith(".js"))
     ok("packed build has common ngp", b"<ngp>" in packed and b"does NOT replace Super Memory" in packed)
+    ok("packed memory is on by default", b"ON by default" in packed)
+    ok("start sets FEDOR_NGP on", "FEDOR_NGP" in start and "Value '1'" in start)
+    ok("electron sets FEDOR_NGP on", "FEDOR_NGP" in main_js and 'process.env.FEDOR_NGP = "1"' in main_js)
     print("emulation ok")
     print(json.dumps({"app": str(out), "shortcut": "AA Coder Fedor 3.0 -> electron.exe .", "home": "CoderApp"}, ensure_ascii=False))
 

@@ -30,6 +30,10 @@ ok("start skips public desktop", !/CommonDesktopDirectory/.test(start));
 ok("start does not wipe launchers on error", !/Remove-InstallLaunchers -ProfileDir/.test(start));
 ok("start does not write desktop log", !/AA-Coder-Fedor-install\.log/.test(start));
 ok("start does not throw leftover edition", !/Leftover program is/.test(start));
+ok("start turns full memory on by default", /FEDOR_NGP/.test(start) && /Set-EnvVar -Name 'FEDOR_NGP' -Value '1'/.test(start));
+
+const electron = readFileSync(path.join(process.cwd(), "electron/main.cjs"), "utf8");
+ok("electron turns full memory on by default", /FEDOR_NGP/.test(electron) && /process.env.FEDOR_NGP = "1"/.test(electron));
 
 const launcher = readFileSync(path.join(process.cwd(), "lib/desktop-launcher.ts"), "utf8");
 ok("launcher uses electron dot", /"\$\{electronExe\}" \./.test(launcher));

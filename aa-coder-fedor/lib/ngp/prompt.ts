@@ -1,4 +1,4 @@
-import { disableNgp, enableNgp, isNgpOn } from "./enabled";
+import { disableNgp, enableNgp, ensureNgpDefaultOn, isNgpOn } from "./enabled";
 import { extractNgpFromText } from "./extract";
 import { needsEntropyCheck, NGP_ENTROPY_CHECK, NGP_VALUES } from "./values";
 import { recallNgp } from "./store";
@@ -20,6 +20,7 @@ export function observeNgpUserText(text: string): NgpObserve {
       return "disabled";
     }
     if (!isNgpOn()) return "off";
+    ensureNgpDefaultOn();
     extractNgpFromText(raw);
     return "noted";
   } catch {
@@ -28,15 +29,16 @@ export function observeNgpUserText(text: string): NgpObserve {
 }
 
 export function getNgpPromptBlock(task = ""): string {
-  if (!isNgpOn()) return "";
+  if (!ensureNgpDefaultOn()) return "";
   const hits = recallNgp(task, 8);
   const user = hits.filter((n) => n.level === "user").map((n) => `- ${n.text}`);
   const project = hits.filter((n) => n.level === "project").map((n) => `- ${n.text}`);
   const lines = [
     "<ngp>",
-    "Common lane. This does NOT replace Super Memory, the skill ledger, or click tactics.",
+    "Full memory is ON by default from the first message.",
+    "This does NOT replace Super Memory, the skill ledger, or click tactics.",
     "Clicks, browser kits, and what worked yesterday stay in Super Memory / skill ledger.",
-    "Here only: who the user is, values, and durable preferences.",
+    "Here: who the user is, values, durable preferences, plus Super Memory / skills already in the prompt.",
     "<values>",
     NGP_VALUES,
     "</values>",

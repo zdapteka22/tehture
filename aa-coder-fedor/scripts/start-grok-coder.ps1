@@ -1137,6 +1137,12 @@ try {
   Set-EnvVar -Name 'GROK_NODE' -Value $nodeExe
   Set-EnvVar -Name 'GROK_PORT' -Value ([string]$Port)
   Set-EnvVar -Name 'GROK_DESKTOP' -Value '1'
+  $ngpNow = Get-EnvVar -Name 'FEDOR_NGP'
+  $ngpLow = ''
+  if ($ngpNow) { $ngpLow = ([string]$ngpNow).Trim().ToLower() }
+  if ($ngpLow -ne '0' -and $ngpLow -ne 'false' -and $ngpLow -ne 'off' -and $ngpLow -ne 'no') {
+    Set-EnvVar -Name 'FEDOR_NGP' -Value '1'
+  }
 
   Write-Host '[7/8] Visual C++ + Electron window...'
   if (-not $alreadyReady) {
