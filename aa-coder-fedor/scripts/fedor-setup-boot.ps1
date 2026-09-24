@@ -92,7 +92,7 @@ function Start-HtaIfNeeded {
   if ($SkipUi -eq '1') { return }
   $htaPath = Join-Path -Path $tmp -ChildPath 'fedor2-setup.hta'
   Write-SectionFile -Text $raw -Name 'GROK_HTA' -Dest $htaPath | Out-Null
-  Write-Ui -Pct 4 -Msg 'Ставлю кодер' -Sub 'Идет установка. Проценты пойдут вверх.'
+  Write-Ui -Pct 4 -Msg 'Installing' -Sub 'Setup is running. Progress will move up.'
   try {
     if (Test-Path -LiteralPath $htaPath) {
       $sysRoot = [Environment]::GetEnvironmentVariable('SystemRoot')

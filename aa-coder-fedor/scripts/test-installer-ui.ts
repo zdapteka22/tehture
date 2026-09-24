@@ -35,6 +35,10 @@ ok("start turns full memory on by default", /FEDOR_NGP/.test(start) && /Set-EnvV
 const electron = readFileSync(path.join(process.cwd(), "electron/main.cjs"), "utf8");
 ok("electron turns full memory on by default", /FEDOR_NGP/.test(electron) && /process.env.FEDOR_NGP = "1"/.test(electron));
 
+const boot = readFileSync(path.join(process.cwd(), "scripts/fedor-setup-boot.ps1"), "utf8");
+ok("boot script is ascii for PS 5.1", /^[\x09\x0a\x0d\x20-\x7e]*$/.test(boot));
+ok("boot has no raw cyrillic quotes", !/[А-яЁё]/.test(boot));
+
 const launcher = readFileSync(path.join(process.cwd(), "lib/desktop-launcher.ts"), "utf8");
 ok("launcher uses electron dot", /"\$\{electronExe\}" \./.test(launcher));
 ok("launcher skips public desktop write", /Never write to Public Desktop/.test(launcher));

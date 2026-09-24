@@ -49,6 +49,8 @@ def main() -> None:
     ok("hta is progress only", "Ставлю кодер" in hta and "ЮMoney" not in hta and "ad-sbp" not in hta)
     ok("hta is not cards page", "Platyna" not in hta and "Fyatu" not in hta)
     ok("boot does not unpack ads", "AdFiles" not in boot and "ad-sbp" not in boot)
+    ok("boot extract writes unicode", "UnicodeEncoding" in raw and "WriteAllBytes($p,[Convert]::FromBase64String($b64))" not in raw)
+    ok("boot payload is ascii", all(ord(ch) < 128 for ch in boot))
     ok("install skips public desktop", "CommonDesktopDirectory" not in install)
     ok("install writes shortcut before start", install.split("Write-Host '[4/5]")[1].find("Write-InstallLaunchers") < install.split("Write-Host '[4/5]")[1].find("& $starter"))
     ok("old deepseek key gone from bat text", OLD not in raw)

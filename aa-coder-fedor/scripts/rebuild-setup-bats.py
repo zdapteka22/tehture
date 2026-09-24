@@ -181,8 +181,28 @@ def patch_zip(zip_bytes: bytes, sku: str = "paid") -> bytes:
     return out_buf.getvalue()
 
 
+BOOT_EXTRACT_OLD = "[IO.File]::WriteAllBytes($p,[Convert]::FromBase64String($b64))"
+BOOT_EXTRACT_NEW = (
+    "$bytes=[Convert]::FromBase64String($b64); "
+    "$utf8=New-Object System.Text.UTF8Encoding $false; "
+    "$text=$utf8.GetString($bytes); "
+    "if($text.Length -gt 0 -and [int][char]$text[0] -eq 65279){$text=$text.Substring(1)}; "
+    "$uni=New-Object System.Text.UnicodeEncoding $false,$true; "
+    "[IO.File]::WriteAllText($p,$text,$uni)"
+)
+
+
+def patch_boot_extract(raw: str) -> str:
+    if BOOT_EXTRACT_NEW in raw:
+        return raw
+    if BOOT_EXTRACT_OLD not in raw:
+        raise SystemExit("boot extract command missing")
+    return raw.replace(BOOT_EXTRACT_OLD, BOOT_EXTRACT_NEW, 1)
+
+
 def patch_bat(path: Path) -> None:
     raw = path.read_text(encoding="utf-8", errors="replace")
+    raw = patch_boot_extract(raw)
     names = [
         "GROK_BOOT",
         "GROK_HTA",
