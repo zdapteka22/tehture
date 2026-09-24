@@ -105,6 +105,25 @@ function ensureEnvLocal() {
   if (ngp !== "0" && ngp !== "false" && ngp !== "off" && ngp !== "no") {
     process.env.FEDOR_NGP = "1";
   }
+  process.env.FEDOR_APP_ROOT = ROOT;
+  const skuFiles = [path.join(ROOT, ".fedor-sku"), path.join(ROOT, ".next", "FEDOR_SKU")];
+  let sku = String(process.env.FEDOR_SKU || "").trim().toLowerCase();
+  if (sku !== "free" && sku !== "paid") {
+    for (const file of skuFiles) {
+      try {
+        if (!fs.existsSync(file)) continue;
+        const raw = fs.readFileSync(file, "utf8").trim().toLowerCase();
+        if (raw === "free" || raw === "paid") {
+          sku = raw;
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+  if (sku === "free" || sku === "paid") process.env.FEDOR_SKU = sku;
+  if (sku === "free") process.env.FEDOR_FREE = "1";
 }
 
 function listNodeCandidates() {
@@ -355,6 +374,9 @@ function startNext(nodeBin, mode) {
     GROK_DESKTOP: "1",
     GROK_NODE: nodeBin,
     FEDOR_NGP: process.env.FEDOR_NGP || "1",
+    FEDOR_SKU: process.env.FEDOR_SKU || "",
+    FEDOR_FREE: process.env.FEDOR_FREE || "",
+    FEDOR_APP_ROOT: ROOT,
     FEDOR4_HOST_BRIDGE: process.env.FEDOR4_HOST_BRIDGE || "",
     FEDOR4_HOST_TOKEN: process.env.FEDOR4_HOST_TOKEN || "",
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD || "1",

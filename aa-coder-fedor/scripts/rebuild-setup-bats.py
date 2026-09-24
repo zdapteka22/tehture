@@ -111,6 +111,7 @@ INJECT = {
     "lib/ngp/prompt.ts": ROOT / "lib" / "ngp" / "prompt.ts",
     "lib/ngp/store.ts": ROOT / "lib" / "ngp" / "store.ts",
     "lib/ngp/index.ts": ROOT / "lib" / "ngp" / "index.ts",
+    "lib/brand.ts": ROOT / "lib" / "brand.ts",
     "lib/prompt.ts": ROOT / "lib" / "prompt.ts",
     "lib/fyodor/handle.ts": ROOT / "lib" / "fyodor" / "handle.ts",
     "lib/fyodor/until-goal.ts": ROOT / "lib" / "fyodor" / "until-goal.ts",
@@ -173,10 +174,35 @@ def patch_keep_going_chunk(data: bytes) -> bytes:
     return text.encode("utf-8")
 
 
+CHAT_METER_OLD = 'if(!d.j5&&!(0,n.pS)(r?.content||""))'
+CHAT_METER_NEW = (
+    'if(!d.j5&&!function(){try{var fs=require("fs"),p=require("path"),c=process.env.FEDOR_APP_ROOT||process.cwd(),'
+    'e=String(process.env.FEDOR_SKU||process.env.FEDOR_FREE||process.env.FEDOR_EDITION||"").trim().toLowerCase();'
+    'if(e==="free"||e==="1"||e==="true")return!0;'
+    'for(var f of[p.join(c,".fedor-sku"),p.join(c,".next","FEDOR_SKU"),p.join(c,".fedor-install-ok")]){'
+    'if(fs.existsSync(f)&&/^\\s*free\\s*$/im.test(fs.readFileSync(f,"utf8")))return!0}}catch(x){}return!1}()'
+    '&&!(0,n.pS)(r?.content||""))'
+)
+
+
+def patch_chat_free_sku(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "Лимит тарифа" not in text or CHAT_METER_OLD not in text:
+        return data
+    if "FEDOR_APP_ROOT||process.cwd()" in text:
+        return data
+    return text.replace(CHAT_METER_OLD, CHAT_METER_NEW, 1).encode("utf-8")
+
+
 def maybe_patch_packed(rel: str, data: bytes) -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/690.js"):
-        return patch_keep_going_chunk(data)
+        data = patch_keep_going_chunk(data)
+    if norm.endswith("server/app/api/chat/route.js"):
+        data = patch_chat_free_sku(data)
     return data
 
 
@@ -210,6 +236,8 @@ def patch_zip(zip_bytes: bytes, sku: str = "paid") -> bytes:
             rel = info.filename.replace("\\", "/")
             if replace_next and (rel == ".next" or rel.startswith(".next/")):
                 continue
+            if rel in {".fedor-sku", ".next/FEDOR_SKU"}:
+                continue
             if rel in inject:
                 dest.writestr(info, with_baked_key(inject[rel]))
                 written.add(rel)
@@ -230,8 +258,10 @@ def patch_zip(zip_bytes: bytes, sku: str = "paid") -> bytes:
             written.add(rel)
         if replace_next:
             inject_tree(dest, written, NEXT_OVERRIDE, ".next")
-            dest.writestr(".next/FEDOR_SKU", f"{sku}\n".encode("utf-8"))
-            written.add(".next/FEDOR_SKU")
+        dest.writestr(".fedor-sku", f"{sku}\n".encode("utf-8"))
+        dest.writestr(".next/FEDOR_SKU", f"{sku}\n".encode("utf-8"))
+        written.add(".fedor-sku")
+        written.add(".next/FEDOR_SKU")
     return out_buf.getvalue()
 
 

@@ -1,4 +1,4 @@
-import { IS_FREE_EDITION } from "@/lib/brand";
+import { isFreeEdition } from "@/lib/brand";
 import { meterPaidChatTurn, quotaOf, userByToken } from "@/lib/commerce/store";
 import { answerLocalAsks, flushDailyIfDue, pendingAskIds, pushRemoteTokenReport } from "@/lib/commerce/token-sync";
 import { trimHistoryForModel } from "@/lib/chat-store";
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
   await ensureWorkspace();
   const lastUser = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   let accountToken = body.accountToken?.trim() || "";
-  if (!IS_FREE_EDITION && !looksLikeStopCommand(lastUser?.content || "")) {
+  if (!isFreeEdition() && !looksLikeStopCommand(lastUser?.content || "")) {
     try {
       const gate = meterPaidChatTurn(accountToken, lastUser?.content || " ");
       accountToken = gate.token;

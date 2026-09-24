@@ -263,16 +263,12 @@ function Remove-InstallLaunchers {
 function Get-PackedSku {
   param([string]$Root)
   if (-not $Root) { return 'paid' }
-  $stamp = Join-Path -Path $Root -ChildPath '.fedor-sku'
-  if (Test-Path -LiteralPath $stamp) {
-    $raw = ([IO.File]::ReadAllText($stamp)).Trim().ToLower()
-    if ($raw -eq 'free' -or $raw -eq 'paid') { return $raw }
-  }
-  $brand = Join-Path -Path $Root -ChildPath 'lib\brand.ts'
-  if (Test-Path -LiteralPath $brand) {
-    $txt = [IO.File]::ReadAllText($brand)
-    if ($txt -match 'IS_FREE_EDITION\s*=\s*true') { return 'free' }
-    if ($txt -match 'IS_FREE_EDITION\s*=\s*false') { return 'paid' }
+  foreach ($rel in @('.fedor-sku', '.next\FEDOR_SKU', '.fedor-install-ok')) {
+    $stamp = Join-Path -Path $Root -ChildPath $rel
+    if (Test-Path -LiteralPath $stamp) {
+      $raw = ([IO.File]::ReadAllText($stamp)).Trim().ToLower()
+      if ($raw -eq 'free' -or $raw -eq 'paid') { return $raw }
+    }
   }
   return 'paid'
 }

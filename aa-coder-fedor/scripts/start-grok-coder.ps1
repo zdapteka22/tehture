@@ -601,16 +601,12 @@ function Test-ElectronExe {
 function Get-PackedSku {
   param([string]$Root)
   if (-not $Root) { return 'paid' }
-  $stamp = Join-Path -Path $Root -ChildPath '.fedor-sku'
-  if (Test-Path -LiteralPath $stamp) {
-    $raw = ([IO.File]::ReadAllText($stamp)).Trim().ToLower()
-    if ($raw -eq 'free' -or $raw -eq 'paid') { return $raw }
-  }
-  $brand = Join-Path -Path $Root -ChildPath 'lib\brand.ts'
-  if (Test-Path -LiteralPath $brand) {
-    $txt = [IO.File]::ReadAllText($brand)
-    if ($txt -match 'IS_FREE_EDITION\s*=\s*true') { return 'free' }
-    if ($txt -match 'IS_FREE_EDITION\s*=\s*false') { return 'paid' }
+  foreach ($rel in @('.fedor-sku', '.next\FEDOR_SKU', '.fedor-install-ok')) {
+    $stamp = Join-Path -Path $Root -ChildPath $rel
+    if (Test-Path -LiteralPath $stamp) {
+      $raw = ([IO.File]::ReadAllText($stamp)).Trim().ToLower()
+      if ($raw -eq 'free' -or $raw -eq 'paid') { return $raw }
+    }
   }
   return 'paid'
 }
@@ -1143,6 +1139,12 @@ try {
   if ($ngpLow -ne '0' -and $ngpLow -ne 'false' -and $ngpLow -ne 'off' -and $ngpLow -ne 'no') {
     Set-EnvVar -Name 'FEDOR_NGP' -Value '1'
   }
+  $skuNow = 'paid'
+  try { $skuNow = Get-PackedSku -Root $Root } catch { $skuNow = 'paid' }
+  if ($skuNow -ne 'free') { $skuNow = 'paid' }
+  Set-EnvVar -Name 'FEDOR_SKU' -Value $skuNow
+  Set-EnvVar -Name 'FEDOR_APP_ROOT' -Value $Root
+  if ($skuNow -eq 'free') { Set-EnvVar -Name 'FEDOR_FREE' -Value '1' }
 
   Write-Host '[7/8] Visual C++ + Electron window...'
   if (-not $alreadyReady) {

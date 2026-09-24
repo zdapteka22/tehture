@@ -11,7 +11,7 @@ import {
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import path from "node:path";
 
-import { APP_TITLE, APP_VERSION } from "../brand";
+import { APP_TITLE, APP_VERSION, isFreeEdition } from "../brand";
 import { cryptoNote, quoteCrypto } from "./crypto-pay";
 import { hubRoot } from "./hub-dir";
 import { licenseFingerprint, verifyLicense } from "./license";
@@ -460,11 +460,35 @@ export function consumeChatTurn(token: string, text: string): { ok: boolean; use
   });
 }
 
-/** Paid SKU: keep Free 10/2h. Stale token after reinstall must not open /pay. */
+/** Paid SKU: keep Free 10/2h. Free-Setup stamp / FEDOR_SKU=free never opens /pay. */
 export function meterPaidChatTurn(
   token: string | undefined | null,
   text: string,
 ): { ok: boolean; used: number; quota: QuotaView; payUrl: string; token: string } {
+  if (isFreeEdition()) {
+    const given = String(token || "").trim();
+    const guest = given ? userByToken(given) : null;
+    return {
+      ok: true,
+      used: 0,
+      quota: guest
+        ? quotaOf(guest)
+        : {
+            planId: "free",
+            planName: "Free",
+            tokensLeft: 1_000_000,
+            tokensCap: 1_000_000,
+            extraTokens: 0,
+            resetAt: Date.now() + 2 * 60 * 60 * 1000,
+            windowKind: "free2h",
+            fallbackFreeLeft: 0,
+            blocked: false,
+            openPay: false,
+          },
+      payUrl: "",
+      token: given,
+    };
+  }
   const given = String(token || "").trim();
   const tryToken = (value: string) => {
     try {
