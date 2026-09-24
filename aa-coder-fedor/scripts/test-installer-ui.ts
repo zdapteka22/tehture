@@ -12,11 +12,11 @@ function ok(name: string, cond: unknown) {
 }
 
 const hta = installerHtaHtml();
-ok("no payment slide", !/ЮMoney|оплат|крипт|ad-sbp|ЮKassa/i.test(hta));
-ok("no ad images", !/ad-code\.jpg|ad-free\.jpg/.test(hta));
-ok("no ad files listed", SETUP_AD_FILES.length === 0);
-ok("progress ui", /Ставлю кодер/.test(hta) && /AA Coder Fedor 3.0/.test(hta));
-ok("shortcut hint", /ярлык AA Coder Fedor 3.0/.test(hta));
+ok("ad banners listed", SETUP_AD_FILES.includes("ad-code.jpg") && SETUP_AD_FILES.includes("ad-free.jpg") && SETUP_AD_FILES.length >= 6);
+ok("hta has slideshow banners", /ad-code\.jpg/.test(hta) && /ad-free\.jpg/.test(hta) && /class="slides"/.test(hta));
+ok("hta is not cards page", !/Platyna|Fyatu|виртуальн\w* карт/i.test(hta));
+ok("progress ui", /Ставлю кодер/.test(hta));
+ok("shortcut hint", /ярлык:? AA Coder Fedor 3\.0/.test(hta));
 
 const install = readFileSync(path.join(process.cwd(), "scripts/grok-coder-install.ps1"), "utf8");
 ok("install skips public desktop", !/CommonDesktopDirectory/.test(install));
@@ -38,6 +38,7 @@ ok("electron turns full memory on by default", /FEDOR_NGP/.test(electron) && /pr
 const boot = readFileSync(path.join(process.cwd(), "scripts/fedor-setup-boot.ps1"), "utf8");
 ok("boot script is ascii for PS 5.1", /^[\x09\x0a\x0d\x20-\x7e]*$/.test(boot));
 ok("boot has no raw cyrillic quotes", !/[А-яЁё]/.test(boot));
+ok("boot unpacks ad banners", /\$AdFiles/.test(boot) && /GROK_AD_/.test(boot) && /ad-code\.jpg/.test(boot));
 
 const launcher = readFileSync(path.join(process.cwd(), "lib/desktop-launcher.ts"), "utf8");
 ok("launcher uses electron dot", /"\$\{electronExe\}" \./.test(launcher));

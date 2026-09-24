@@ -200,6 +200,44 @@ def patch_boot_extract(raw: str) -> str:
     return raw.replace(BOOT_EXTRACT_OLD, BOOT_EXTRACT_NEW, 1)
 
 
+AD_DIR = ROOT / "electron" / "ads"
+AD_FILES = [
+    "ad-code.jpg",
+    "ad-both.jpg",
+    "ad-parallel.jpg",
+    "ad-memory.jpg",
+    "ad-agents.jpg",
+    "ad-sbp.jpg",
+    "ad-crew.jpg",
+    "ad-free.jpg",
+]
+
+
+def ensure_ads() -> None:
+    missing = [name for name in AD_FILES if not (AD_DIR / name).exists()]
+    if not missing:
+        return
+    subprocess.run(["python3", str(ROOT / "scripts" / "generate-ads.py")], cwd=ROOT, check=True)
+    still = [name for name in AD_FILES if not (AD_DIR / name).exists()]
+    if still:
+        raise SystemExit(f"ads still missing: {still}")
+
+
+def insert_ad_sections(raw: str) -> str:
+    raw = re.sub(r"\n-----GROK_AD_[A-Za-z0-9_.-]+-----\n(?:[A-Za-z0-9+/=\r\n]+)", "\n", raw)
+    blocks: list[str] = []
+    for name in AD_FILES:
+        path = AD_DIR / name
+        if not path.exists():
+            raise SystemExit(f"missing ad image {path}")
+        blocks.append(f"-----GROK_AD_{name}-----\n{wrap_b64(path.read_bytes())}\n")
+    tok = "-----GROK_INSTALL_PS1-----"
+    i = raw.rfind(tok)
+    if i < 0:
+        raise SystemExit("missing GROK_INSTALL_PS1")
+    return raw[:i] + "".join(blocks) + raw[i:]
+
+
 def patch_bat(path: Path) -> None:
     raw = path.read_text(encoding="utf-8", errors="replace")
     raw = patch_boot_extract(raw)
@@ -213,6 +251,8 @@ def patch_bat(path: Path) -> None:
     zip_bytes = section_bytes(raw, "GROK_APP_ZIP", names)
     raw = replace_section(raw, "GROK_BOOT", BOOT.read_bytes())
     raw = replace_section(raw, "GROK_HTA", hta_html())
+    ensure_ads()
+    raw = insert_ad_sections(raw)
     raw = replace_section(raw, "GROK_INSTALL_PS1", with_baked_key(INSTALL.read_bytes()))
     if zip_bytes and zip_bytes[:2] == b"PK":
         sku = "free" if "Free" in path.name else "paid"

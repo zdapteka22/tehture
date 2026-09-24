@@ -16,7 +16,8 @@ if (-not $tmp) { $tmp = [Environment]::GetEnvironmentVariable('TMP') }
 $tmp = Join-Path -Path $tmp -ChildPath 'Fedor2'
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $SkipUi = [Environment]::GetEnvironmentVariable('FEDOR_SKIP_LAUNCH')
-$AllNames = @('GROK_BOOT','GROK_HTA','GROK_INSTALL_PS1','GROK_APP_ZIP','GROK_END')
+$AdFiles = @('ad-code.jpg','ad-both.jpg','ad-parallel.jpg','ad-memory.jpg','ad-agents.jpg','ad-sbp.jpg','ad-crew.jpg','ad-free.jpg')
+$AllNames = @('GROK_BOOT','GROK_HTA','GROK_AD_ad-code.jpg','GROK_AD_ad-both.jpg','GROK_AD_ad-parallel.jpg','GROK_AD_ad-memory.jpg','GROK_AD_ad-agents.jpg','GROK_AD_ad-sbp.jpg','GROK_AD_ad-crew.jpg','GROK_AD_ad-free.jpg','GROK_INSTALL_PS1','GROK_APP_ZIP','GROK_END')
 
 function Get-SectionBytes {
   param([string]$Text, [string]$Name)
@@ -92,6 +93,9 @@ function Start-HtaIfNeeded {
   if ($SkipUi -eq '1') { return }
   $htaPath = Join-Path -Path $tmp -ChildPath 'fedor2-setup.hta'
   Write-SectionFile -Text $raw -Name 'GROK_HTA' -Dest $htaPath | Out-Null
+  foreach ($n in $AdFiles) {
+    Write-SectionFile -Text $raw -Name ('GROK_AD_' + $n) -Dest (Join-Path -Path $tmp -ChildPath $n) | Out-Null
+  }
   Write-Ui -Pct 4 -Msg 'Installing' -Sub 'Setup is running. Progress will move up.'
   try {
     if (Test-Path -LiteralPath $htaPath) {
