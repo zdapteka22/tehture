@@ -7,6 +7,7 @@ export type PageMark = {
 };
 
 let lastClickNeedsTactic = false;
+let lastClickedKey = "";
 
 export function noteClickTacticChange(needed: boolean): void {
   lastClickNeedsTactic = Boolean(needed);
@@ -14,6 +15,36 @@ export function noteClickTacticChange(needed: boolean): void {
 
 export function lastClickWasAccordion(): boolean {
   return lastClickNeedsTactic;
+}
+
+function normClickKey(key: string): string {
+  return String(key || "")
+    .trim()
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .toLowerCase();
+}
+
+export function noteClickedKey(key: string): void {
+  lastClickedKey = normClickKey(key);
+}
+
+export function lastClickedKeyValue(): string {
+  return lastClickedKey;
+}
+
+export function sameRefAfterAccordion(key: string): boolean {
+  return lastClickNeedsTactic && Boolean(lastClickedKey) && lastClickedKey === normClickKey(key);
+}
+
+export function sameRefAdvice(key: string): string {
+  const label = String(key || "кнопка").trim();
+  return [
+    `Тот же ref «${label}» — это аккордеон, не сломанный клик.`,
+    "Не вызывай click_kit и не жми ту же кнопку снова.",
+    "Жми появившийся пункт по тексту (Магазин / Интеграция / язык / страна) или browser_press Enter.",
+    "Сними snapshot: оверлеи (меню языка, список стран) теперь в дереве.",
+  ].join(" ");
 }
 
 function stripUrl(url: string): string {
@@ -81,7 +112,7 @@ export function staleClickAdvice(key: string, after: PageMark, opened: string[])
 }
 
 export function looksLikeStaleClick(text: string): boolean {
-  return /страница не сменилась|раскрылось меню|аккордеон, не ссылка|не вызывай click_kit/i.test(
+  return /страница не сменилась|раскрылось меню|аккордеон, не ссылка|не вызывай click_kit|тот же ref/i.test(
     String(text || ""),
   );
 }

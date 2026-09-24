@@ -31,26 +31,42 @@ const MENU = [
 
 const SNAPSHOT_JS = `(() => {
   const nodes = [];
-  const sel = 'a,button,input,textarea,select,summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="option"],[onclick],[data-testid],label';
-  document.querySelectorAll(sel).forEach((el) => {
+  const seen = new Set();
+  const sel = 'a,button,input,textarea,select,summary,option,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="checkbox"],[role="option"],[role="listbox"],[role="menu"],[role="menubar"],[role="dialog"],[role="alertdialog"],[role="combobox"],[role="listitem"],[role="treeitem"],[role="gridcell"],[role="switch"],[role="radio"],[aria-haspopup],[aria-expanded="true"],[onclick],[data-testid],label';
+  const overlaySel = '[role="listbox"],[role="menu"],[role="dialog"],[role="alertdialog"],[role="combobox"],[aria-expanded="true"],[popover],:popover-open,[class*="dropdown"],[class*="overlay"],[class*="popover"],[class*="modal"],[class*="lang"],[class*="country"]';
+  const pushEl = (el, force) => {
+    if (!el || seen.has(el)) return;
     const r = el.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) return;
-    if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return;
-    const name = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.title || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+    const inOverlay = el.closest(overlaySel);
+    if (!force && !inOverlay && (r.width < 2 || r.height < 2)) return;
+    if (!force && !inOverlay && (r.bottom < -40 || r.right < -40 || r.top > innerHeight + 40 || r.left > innerWidth + 40)) return;
+    const name = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.title || el.getAttribute('data-value') || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+    if (!name && !inOverlay && !force) return;
+    seen.add(el);
     nodes.push({
       ref: 'e' + (nodes.length + 1),
       role: (el.getAttribute('role') || el.tagName.toLowerCase()),
-      name,
+      name: name || (inOverlay ? '(оверлей)' : ''),
       href: el.href || '',
       x: Math.round(r.x + r.width / 2),
       y: Math.round(r.y + r.height / 2),
+      overlay: Boolean(inOverlay),
+    });
+  };
+  document.querySelectorAll(sel).forEach((el) => pushEl(el, false));
+  document.querySelectorAll(overlaySel).forEach((box) => {
+    pushEl(box, true);
+    box.querySelectorAll('a,button,li,span,div,p,option,[role="option"],[role="menuitem"]').forEach((el) => {
+      const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+      if (t && t.length <= 80) pushEl(el, true);
     });
   });
   const text = (document.body && document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 1800);
-  return { url: location.href, hash: location.hash || '', title: document.title, text, nodes: nodes.slice(0, 80) };
+  const overlays = [...document.querySelectorAll(overlaySel)].slice(0, 8).map((el) => String(el.getAttribute('role') || el.className || el.tagName).slice(0, 40));
+  return { url: location.href, hash: location.hash || '', title: document.title, text, overlays, nodes: nodes.slice(0, 160) };
 })()`;
 
-const CLICKABLE_SEL = 'a,button,input,textarea,select,summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="option"],[onclick],[data-testid],label';
+const CLICKABLE_SEL = 'a,button,input,textarea,select,summary,option,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="checkbox"],[role="option"],[role="listbox"],[role="menu"],[role="menubar"],[role="dialog"],[role="alertdialog"],[role="combobox"],[role="listitem"],[role="treeitem"],[onclick],[data-testid],label';
 
 function FIND_JS(query) {
   return `(() => {
@@ -170,10 +186,12 @@ function formatSnapshot(snap) {
   lines.push(
     `title: ${snap.title}`,
     "элементы:",
-    ...(snap.nodes || []).map((node) => `- [${node.ref}] ${node.role} "${node.name}" @${node.x},${node.y}`),
-    "текст:",
-    snap.text || "(пусто)",
+    ...(snap.nodes || []).map((node) => `- [${node.ref}] ${node.role} "${node.name}" @${node.x},${node.y}${node.overlay ? " overlay" : ""}`),
   );
+  if (snap.overlays && snap.overlays.length) {
+    lines.push(`оверлеи: ${snap.overlays.join(", ")}`);
+  }
+  lines.push("текст:", snap.text || "(пусто)");
   if (looksLikeHumanCheck(snap.title, snap.text, snap.url)) {
     lines.push("", "HUMAN CHECK: капча. Не решать. Попросите человека в открытом окне.");
   }
@@ -404,6 +422,21 @@ async function cmdClick(target, kind) {
     if (looksLikeHumanCheck(snap0.title, snap0.text, snap0.url)) {
       return { ok: false, message: "HUMAN CHECK: капча. Не кликаю. Завершите в открытом окне." };
     }
+    const state = loadState();
+    const key = String(target || "").trim().replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+    if (state.lastAccordion && state.lastClickKey && state.lastClickKey === key) {
+      return {
+        ok: true,
+        tactic: true,
+        kit: "cdp-js",
+        message: [
+          `Тот же ref «${target}» — это аккордеон, не сломанный клик.`,
+          "Не вызывай click_kit и не жми ту же кнопку снова.",
+          "Жми появившийся пункт по тексту или browser_press Enter.",
+          formatSnapshot(snap0),
+        ].join(" "),
+      };
+    }
     const point = await resolveClickPoint(client, target);
     const button = kind === "right" ? "right" : "left";
     const count = kind === "dbl" ? 2 : 1;
@@ -416,19 +449,27 @@ async function cmdClick(target, kind) {
     }
     if (js && js.ok) used.push("cdp-js");
     else used.push("cdp-js-miss");
-    if (!js || !js.ok || kind === "dbl" || kind === "right") {
+    if (kind === "dbl" || kind === "right") {
       await humanMoveClick(client, point.x, point.y, button, count);
       used.push("cdp-mouse");
+    } else if (!js || !js.ok) {
+      try {
+        js = await evaluate(client, CLICK_JS((js && js.name) || target));
+      } catch {
+        js = js || null;
+      }
+      if (js && js.ok && !used.includes("cdp-js")) used.push("cdp-js");
     }
     await sleep(400);
     const snap = await snapshotNow(client, tab);
     const how = used.join(" + ");
     const advice = clickOutcomeAdvice(target, snap0, snap);
     const head = `клик «${(js && js.name) || point.name || target}» @${point.x},${point.y} [${how}]`;
+    saveState({ lastClickKey: key, lastAccordion: Boolean(advice) });
     return {
       ok: true,
       clicked: point,
-      kit: js && js.ok ? "cdp-js" : "cdp-mouse",
+      kit: js && js.ok ? "cdp-js" : used.includes("cdp-mouse") ? "cdp-mouse" : "cdp-js",
       tactic: Boolean(advice),
       message: `${advice ? `${advice}\n` : ""}${head}\n${formatSnapshot(snap)}`,
     };
@@ -759,4 +800,6 @@ module.exports = {
   cmdGuard,
   goalBrain,
   clickOutcomeAdvice,
+  SNAPSHOT_JS,
+  CLICKABLE_SEL,
 };

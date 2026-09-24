@@ -75,21 +75,21 @@ ok(
 );
 
 ok(
-  "vk: real group_id can stop",
+  "vk: real group_id still keeps going",
   nudge({
     userText: "создай сообщество вк",
     content: "сообщество создано group_id: 99881",
     usedTools: ["browser_navigate", "browser_click", "browser_type", "run_terminal_cmd"],
-  }) === false,
+  }) === true,
 );
 
 ok(
-  "open url after navigate can stop",
+  "open url after navigate still keeps going",
   nudge({
     userText: "открой https://example.com",
     content: "Открыл example.com",
     usedTools: ["browser_navigate"],
-  }) === false,
+  }) === true,
 );
 
 ok(
@@ -103,13 +103,13 @@ ok(
 );
 
 ok(
-  "desktop note after one write can stop",
+  "desktop note after write still keeps going",
   nudge({
     userText: "напиши текстовый файл заметка на рабочем столе",
     content: "Записал заметку на рабочий стол.",
     usedTools: ["write_pc_file"],
     changedPaths: ["C:/Users/Dir/Desktop/zametka.txt"],
-  }) === false,
+  }) === true,
 );
 
 ok(

@@ -5,8 +5,11 @@ import {
   clickNeedsTacticChange,
   lastClickWasAccordion,
   looksLikeStaleClick,
+  noteClickedKey,
   noteClickTacticChange,
   parsePageMark,
+  sameRefAdvice,
+  sameRefAfterAccordion,
   staleClickAdvice,
   urlChanged,
 } from "../lib/click-outcome";
@@ -103,6 +106,7 @@ ok("annotate shop no extra", !/не вызывай click_kit/i.test(shopObs) && 
 ok("shop click is success", !looksFailed(shopObs) && !looksLikeStaleClick(shopObs));
 
 const hub = require("../coder-v2/src/hub.cjs") as {
+  SNAPSHOT_JS?: string;
   clickOutcomeAdvice: (
     target: string,
     snap0: { url?: string; title?: string; nodes?: { name?: string }[] },
@@ -127,5 +131,14 @@ ok(
     { url: "https://yookassa.ru/my/shop-settings", title: "Магазин", nodes: [] },
   ) === "",
 );
+
+noteClickedKey("e32");
+noteClickTacticChange(true);
+ok("same ref after accordion", sameRefAfterAccordion("e32") && sameRefAfterAccordion("[e32]"));
+ok("other ref ok", !sameRefAfterAccordion("Магазин"));
+ok("same ref advice", /тот же ref/i.test(sameRefAdvice("e32")) && /не вызывай click_kit/i.test(sameRefAdvice("e32")));
+ok("same ref looks stale", looksLikeStaleClick(sameRefAdvice("e32")));
+ok("same ref blocks heal", !shouldHealClickKit("кнопка не нажимается"));
+ok("snapshot sees overlays", /role="listbox"|role="dialog"|role="menu"/.test(String(hub.SNAPSHOT_JS || "")));
 
 console.log("click-outcome ok");

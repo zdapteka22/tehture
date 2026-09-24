@@ -36,8 +36,9 @@ const BUNDLED: Array<{ id: ClickKitId; kind: ClickKitKind }> = [
 
 const DOWNLOADABLE: Array<{ id: ClickKitId; kind: ClickKitKind; npm?: string }> = [
   { id: "puppeteer-core", kind: "npm", npm: "puppeteer-core" },
-  { id: "playwright-chromium", kind: "browser" },
 ];
+
+const DEAD_KITS = new Set<ClickKitId>(["cdp-mouse", "playwright-chromium"]);
 
 const ALLOWED_NPM = new Set(["puppeteer-core"]);
 
@@ -119,16 +120,24 @@ export function listClickKits(): ClickKitRecord[] {
   return readLedger().kits;
 }
 
+function isDeadKit(kit: ClickKitRecord): boolean {
+  if (kit.id === "playwright-chromium" || kit.id === "cdp-mouse") return true;
+  if (kit.wins <= 0 && kit.losses >= 3) return true;
+  return false;
+}
+
 export function preferredClickOrder(): ClickKitId[] {
   const ledger = readLedger();
   const scored = [...ledger.kits]
-    .filter((kit) => kit.installed && kit.kept)
-    .sort((a, b) => b.wins - b.losses - (a.wins - a.losses) || b.wins - a.wins);
+    .filter((kit) => kit.installed && kit.kept && !isDeadKit(kit))
+    .sort((a, b) => {
+      if (a.id === "cdp-js") return -1;
+      if (b.id === "cdp-js") return 1;
+      return b.wins - b.losses - (a.wins - a.losses) || b.wins - a.wins;
+    });
   const ids = scored.map((kit) => kit.id);
-  for (const id of ledger.preferred) {
-    if (!ids.includes(id)) continue;
-  }
-  return ids.length ? ids : BUNDLED.map((item) => item.id);
+  if (!ids.includes("cdp-js")) ids.unshift("cdp-js");
+  return ids.length ? ids : (["cdp-js"] as ClickKitId[]);
 }
 
 export function recordClickResult(id: ClickKitId, ok: boolean, error = ""): ClickKitRecord {
@@ -144,7 +153,7 @@ export function recordClickResult(id: ClickKitId, ok: boolean, error = ""): Clic
   } else {
     kit.losses += 1;
     kit.lastError = String(error || "").slice(0, 240);
-    kit.kept = true;
+    kit.kept = !(DEAD_KITS.has(id) && kit.wins <= 0 && kit.losses >= 3);
   }
   writeLedger(ledger);
   return kit;
@@ -188,18 +197,10 @@ async function defaultInstaller(id: ClickKitId): Promise<{ ok: boolean; message:
     return { ok: true, message: "скачал puppeteer-core в набор клика" };
   }
   if (id === "playwright-chromium") {
-    const proc = spawnSync("npx", ["--yes", "playwright", "install", "chromium"], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      timeout: 180_000,
-      windowsHide: true,
-      shell: process.platform === "win32",
-    });
-    const out = `${proc.stdout || ""}${proc.stderr || ""}`.trim().slice(0, 400);
-    if ((proc.status ?? 1) !== 0) {
-      return { ok: false, message: out || "playwright install chromium не удался" };
-    }
-    return { ok: true, message: "скачал Chromium для Playwright" };
+    return {
+      ok: false,
+      message: "Chrome for Testing не качаю — использую системный Edge/Chrome. Рабочий набор: cdp-js.",
+    };
   }
   return { ok: true, message: `${id} уже в кодере` };
 }
@@ -255,7 +256,7 @@ export async function healClickKits(reason = ""): Promise<string> {
   }
 
   writeLedger(ledger);
-  lines.push("скачивать больше нечего из белого списка. Дальше кручу встроенные стратегии: JS-клик, CDP-мышь, Playwright.");
+  lines.push("скачивать больше нечего из белого списка. Дальше кручу cdp-js. cdp-mouse и Chrome for Testing не беру.");
   return lines.join("\n");
 }
 
@@ -269,9 +270,9 @@ export function clickKitStatusText(): string {
       const mark = kit.kept && kit.installed ? "держу" : kit.installed ? "есть" : "нет";
       return `- ${kit.id} [${kit.kind}] ${mark}  побед ${kit.wins} / промахов ${kit.losses}${kit.lastError ? `  (${kit.lastError})` : ""}`;
     }),
-    "Если клик сам падает (not found / timeout) — кодер меняет набор и может скачать puppeteer-core / Chromium.",
-    "Победителя поднимает в порядке, промах оставляет в журнале. Наборы навыка не выбрасывает.",
-    "Если клик прошёл, а URL тот же — это меню/аккордеон. Движок не меняем, жмём появившийся пункт или Enter.",
+    "Рабочий набор — cdp-js. cdp-mouse после серии промахов отключаю. Chrome for Testing не качаю, беру системный Edge/Chrome.",
+    "Если клик сам падает (not found / timeout) — кодер меняет набор. puppeteer-core можно скачать; Playwright Chromium — нет.",
+    "Если клик прошёл, а URL тот же — это меню/аккордеон. Движок не меняем, жмём появившийся пункт или Enter. click_kit на аккордеоне не вызывай.",
   ];
   return lines.join("\n");
 }

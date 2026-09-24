@@ -137,7 +137,7 @@ export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
     return { justified: true, reason: 'max_loops', action: 'BLOCKED', verdict: 'BLOCKED' };
   }
   if (goalVerified(state) && !hasUnrecoveredError(receipts) && !isPlanLanguage(event.assistantText, cfg)) {
-    return { justified: true, reason: 'goal_verified', action: 'DONE', verdict: 'DONE' };
+    return { justified: false, reason: 'goal_reached_keep_going', action: 'CONTINUE', verdict: 'CONTINUE' };
   }
 
   if (state.verdict === 'DONE' && !goalVerified(state)) {
@@ -470,9 +470,8 @@ function cmdEnforce(dir, cfg) {
   printStatus(next);
   if (next.verdict === 'CONTINUE') {
     if (cls.action === 'RESTART') writeRestartTicket(dir, cls, next);
-    console.log('ACTION=' + (cls.action === 'RESTART' ? 'RESTART' : 'агент НЕ останавливается до цели или стопа'));
-    process.exitCode = EXIT.CONTINUE;
-    return;
+    console.log('ACTION=' + (cls.action === 'RESTART' ? 'RESTART' : 'НЕ ОСТАНАВЛИВАТЬСЯ'));
+    process.exit(EXIT.CONTINUE);
   }
   if (next.verdict === 'BLOCKED') {
     console.log('ACTION=остановка: BLOCKED');
@@ -555,7 +554,7 @@ function selftest() {
   s.done_when = ['a', 'b'];
   s.verified = ['a', 'b'];
   c = classifyStop(s, { type: 'stop-attempt' }, cfg);
-  pass &= ok('done -> DONE', c.justified && c.verdict === 'DONE' && c.reason === 'goal_verified');
+  pass &= ok('цель достигнута -> CONTINUE', !c.justified && c.verdict === 'CONTINUE' && c.reason === 'goal_reached_keep_going');
 
   pass &= ok('стоп пользователя', isUserStop('остановись', cfg));
   pass &= ok('распознан стоп', isUserStop('stop please', cfg));

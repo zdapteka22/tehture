@@ -11,7 +11,14 @@ import {
   recordClickResult,
   type ClickKitId,
 } from "./click-kit";
-import { annotateClickObservation, looksLikeStaleClick, noteClickTacticChange } from "./click-outcome";
+import {
+  annotateClickObservation,
+  looksLikeStaleClick,
+  noteClickedKey,
+  noteClickTacticChange,
+  sameRefAdvice,
+  sameRefAfterAccordion,
+} from "./click-outcome";
 
 type BrowserModule = typeof import("playwright");
 
@@ -270,7 +277,7 @@ async function playwrightClick(page: import("playwright").Page, key: string, las
     run: async () => {
       const ok = await page.evaluate((q) => {
         const ql = String(q || "").replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
-        const all = [...document.querySelectorAll("a,button,input,textarea,select,summary,[role='button'],[role='link'],[onclick],label")];
+        const all = [...document.querySelectorAll("a,button,input,textarea,select,summary,option,[role='button'],[role='link'],[role='option'],[role='menuitem'],[role='listbox'],[role='menu'],[role='dialog'],[onclick],label")];
         let el = null;
         const ref = ql.match(/^e(\d+)$/);
         if (ref) el = all[Number(ref[1]) - 1] || null;
@@ -321,26 +328,28 @@ async function playwrightClick(page: import("playwright").Page, key: string, las
 }
 
 export async function browserClick(refOrText: string): Promise<string> {
+  const key = refOrText.trim();
+  if (!key) return "ref or text is required";
+  if (sameRefAfterAccordion(key)) return sameRefAdvice(key);
   noteClickTacticChange(false);
   const blocked = await refuseHumanCheck();
   if (blocked) return blocked;
-  const key = refOrText.trim();
-  if (!key) return "ref or text is required";
   const errors: string[] = [];
-  const order = preferredClickOrder();
+  const order = preferredClickOrder().filter((kit) => kit !== "cdp-mouse" && kit !== "playwright-chromium");
+  noteClickedKey(key);
 
   const tryHub = async (): Promise<string | null> => {
     if (!(await useHub())) return null;
     const result = await hubRun("click", [key]);
     const text = hubText(result);
     if (result.ok !== false && !looksLikeClickFailure(text)) {
-      recordClickResult(String(result.kit) === "cdp-mouse" ? "cdp-mouse" : "cdp-js", true);
+      const kit = String(result.kit) === "cdp-mouse" ? "cdp-mouse" : "cdp-js";
+      recordClickResult(kit, true);
       noteClickTacticChange(Boolean(result.tactic) || looksLikeStaleClick(text));
       return text;
     }
     noteClickTacticChange(false);
     recordClickResult("cdp-js", false, text);
-    recordClickResult("cdp-mouse", false, text);
     errors.push(`hub: ${text.slice(0, 180)}`);
     resetDriver();
     return null;

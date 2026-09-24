@@ -8,7 +8,7 @@ async function main() {
   process.env.FEDOR_CLICK_KIT_OFFLINE = "1";
 
   const { noteClickTacticChange } = await import("../lib/click-outcome");
-  const { healClickKits, shouldHealClickKit, looksLikeClickFailure } = await import("../lib/click-kit");
+  const { healClickKits, shouldHealClickKit, looksLikeClickFailure, preferredClickOrder, recordClickResult } = await import("../lib/click-kit");
 
   function ok(name: string, cond: unknown) {
     if (!cond) {
@@ -31,6 +31,17 @@ async function main() {
     const heal = await healClickKits("не нашёл кнопку Настройки");
     ok("heal starts picker", /Подбираю набор/.test(heal));
     ok("heal no accordion lecture", !/аккордеон/.test(heal));
+    ok("heal no chrome for testing", !/скачал Chromium|playwright install chromium/i.test(heal));
+
+    const order = preferredClickOrder();
+    ok("cdp-js first", order[0] === "cdp-js");
+    ok("mouse not preferred", !order.includes("cdp-mouse"));
+    ok("no chrome-for-testing kit", !order.includes("playwright-chromium"));
+
+    recordClickResult("cdp-mouse", false, "miss");
+    recordClickResult("cdp-mouse", false, "miss");
+    recordClickResult("cdp-mouse", false, "miss");
+    ok("dead mouse stays out", !preferredClickOrder().includes("cdp-mouse"));
     console.log("click-kit ok");
   } finally {
     rmSync(dir, { recursive: true, force: true });

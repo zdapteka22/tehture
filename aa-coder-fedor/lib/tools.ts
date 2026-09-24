@@ -58,7 +58,7 @@ export const GROK_TOOLS = [
     function: {
       name: "read_file",
       description:
-        "Read a file on this PC. Relative path = project folder. Absolute path (C:\\..., /..., ~\\...) = anywhere the Windows user can read.",
+        "Read a file on this PC. Relative path = project folder. Absolute path (C:\\..., /..., ~\\...) = anywhere the Windows user can read. Long tables and huge files go into Super Memory: you get a short preview, then grep or memory_recall(\"файл <name>\"). Do not dump the whole file into chat.",
       parameters: {
         type: "object",
         properties: {
@@ -369,7 +369,7 @@ export const GROK_TOOLS = [
     function: {
       name: "click_kit",
       description:
-        "When browser_click itself errors (not found, timeout, intercepts pointer): inspect click kits, download a known replacement if needed, remember which tactic won. Do not drop kits. Do not call this if the click landed and the URL stayed the same or a submenu appeared — that is an accordion: press Enter or click the new item.",
+        "When browser_click itself errors (not found, timeout, intercepts pointer): inspect click kits. Prefer cdp-js. Do not download Chrome for Testing. Do not call this if the click landed and the URL stayed the same or a submenu appeared — that is an accordion: press Enter or click the new item by text, never the same ref.",
       parameters: {
         type: "object",
         properties: {
@@ -735,8 +735,12 @@ async function runExecuteTool(
         return { output: await browserNavigate(String(args.url ?? "")) };
       case "browser_snapshot":
         return { output: await browserSnapshot() };
-      case "browser_click":
-        return { output: await browserClick(String(args.ref || args.text || "")) };
+      case "browser_click": {
+        const { sameRefAdvice, sameRefAfterAccordion } = await import("./click-outcome");
+        const key = String(args.ref || args.text || "");
+        if (sameRefAfterAccordion(key)) return { output: sameRefAdvice(key) };
+        return { output: await browserClick(key) };
+      }
       case "browser_type":
         return {
           output: await browserType(
@@ -814,10 +818,12 @@ async function runExecuteTool(
       }
       case "memory_recall": {
         const query = String(args.query ?? "");
+        const { recallHeavyFile } = await import("./heavy-file");
         const hits = recallMemory(query, 10);
         const skills = recallSkillLines(query, 6);
-        const lines = [...skills, ...hits];
-        return { output: lines.length ? lines.join("\n") : "Super Memory: nothing matched." };
+        const files = recallHeavyFile(query, 6);
+        const lines = [...skills, ...hits, ...files];
+        return { output: lines.length ? [...new Set(lines)].join("\n") : "Super Memory: nothing matched." };
       }
       case "memory_save": {
         const fact = saveMemoryFact(String(args.fact ?? ""), Boolean(args.pinned));

@@ -138,9 +138,9 @@ export function missingGoalWork(userText: string, usedTools: string[], changedPa
 }
 
 /**
- * Keep the tool loop alive until the PC actually changed and the model is not
- * still describing a plan. Narrating «сейчас читаю» is not a step. User stop
- * and hard boundary still halt. One click on a live site is not the goal.
+ * Work tasks keep the tool loop alive even after the goal looks done.
+ * Stop only on user «стоп», hard boundary, abort, or the safety ceiling.
+ * A chat question with no PC work may end without a nudge.
  */
 export function shouldNudgeUntilGoal(opts: {
   userText: string;
@@ -160,23 +160,11 @@ export function shouldNudgeUntilGoal(opts: {
   if (looksLikeNarratingWork(opts.content) || looksUnfinished(opts.content) || looksLikeAskingUser(opts.content)) {
     return true;
   }
-  const workMoves = countWorkMoves(opts.usedTools);
   const liveSite =
     looksLikeOperate(opts.userText) ||
     looksLikeBrowserWork(opts.userText) ||
     looksLikeKeepGoing(opts.userText) ||
     usedLiveSiteTools(opts.usedTools);
-  if (liveSite) {
-    if (isLiveOutcomeJob(opts.userText)) {
-      if (workMoves < MIN_WORK_MOVES && !looksLikeOperateSuccess(opts.userText, opts.content)) return true;
-      return !looksLikeOperateSuccess(opts.userText, opts.content);
-    }
-    if (missingGoalWork(opts.userText, opts.usedTools, opts.changedPaths)) return true;
-    return workMoves < 1;
-  }
-  if (!taskNeedsWork(opts.userText)) return false;
-  if (missingGoalWork(opts.userText, opts.usedTools, opts.changedPaths)) return true;
-  if (!didPcWork(opts.usedTools, opts.changedPaths)) return true;
-  if (!looksLikeSingleAction(opts.userText) && workMoves < MIN_WORK_MOVES) return true;
+  if (liveSite || looksLikeKeepGoing(opts.userText) || taskNeedsWork(opts.userText)) return true;
   return false;
 }

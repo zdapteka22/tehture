@@ -121,6 +121,16 @@ INJECT = {
     "lib/commerce/token-sync.ts": ROOT / "lib" / "commerce" / "token-sync.ts",
     "app/api/hub/route.ts": ROOT / "app" / "api" / "hub" / "route.ts",
     "app/api/chat/route.ts": ROOT / "app" / "api" / "chat" / "route.ts",
+    "lib/heavy-file.ts": ROOT / "lib" / "heavy-file.ts",
+    "lib/host-fs.ts": ROOT / "lib" / "host-fs.ts",
+    "lib/super-memory.ts": ROOT / "lib" / "super-memory.ts",
+    "lib/build-harness.ts": ROOT / "lib" / "build-harness.ts",
+    "lib/click-kit.ts": ROOT / "lib" / "click-kit.ts",
+    "lib/click-outcome.ts": ROOT / "lib" / "click-outcome.ts",
+    "lib/browser.ts": ROOT / "lib" / "browser.ts",
+    "lib/tools.ts": ROOT / "lib" / "tools.ts",
+    "lib/reflexion.ts": ROOT / "lib" / "reflexion.ts",
+    "coder-v2/src/hub.cjs": ROOT / "coder-v2" / "src" / "hub.cjs",
 }
 NEXT_OVERRIDE = Path(os.environ.get("FEDOR_NEXT_OVERRIDE") or ROOT / ".next")
 
@@ -135,8 +145,17 @@ def patch_keep_going_chunk(data: bytes) -> bytes:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
+    if "FEDOR_NEVER_STOP_ON_GOAL" in text:
+        return text.encode("utf-8") if isinstance(text, str) else data
     if "FEDOR_KEEP_GOING" in text:
-        return data
+        text = text.replace(
+            "/*FEDOR_KEEP_GOING*/",
+            "/*FEDOR_KEEP_GOING*//*FEDOR_NEVER_STOP_ON_GOAL*/"
+            "if((0,bE.O2)(a.userText)||(0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)"
+            "||a.usedTools.some(t=>b4.test(String(t||\"\"))))return!0;",
+            1,
+        )
+        return text.encode("utf-8")
     start = text.find(
         'if((0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)||a.usedTools.some(a=>b4.test(String(a||"")))){let d,e;return'
     )
@@ -147,7 +166,9 @@ def patch_keep_going_chunk(data: bytes) -> bytes:
         return data
     live_new = (
         'if((0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)'
-        '||a.usedTools.some(a=>b4.test(String(a||"")))){/*FEDOR_KEEP_GOING*/'
+        '||a.usedTools.some(a=>b4.test(String(a||"")))){/*FEDOR_KEEP_GOING*//*FEDOR_NEVER_STOP_ON_GOAL*/'
+        'if((0,bE.O2)(a.userText)||(0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)'
+        '||a.usedTools.some(t=>b4.test(String(t||""))))return!0;'
         'let workMoves=a.usedTools.filter(t=>String(t||"").trim()&&!b5.test(String(t||""))).length;'
         'if(b7(a.userText)||/(сообществ|групп|паблик|oauth|access_token|заполн|отправ|войди|авториз|зарегистри|опублик)/i.test(a.userText)){'
         'if(workMoves<3)return!0;let d,e;return b=a.userText,c=a.content,d=String(b||""),'
@@ -197,10 +218,118 @@ def patch_chat_free_sku(data: bytes) -> bytes:
     return text.replace(CHAT_METER_OLD, CHAT_METER_NEW, 1).encode("utf-8")
 
 
+def patch_click_chunk(data: bytes) -> bytes:
+    """Prefer cdp-js, skip dead cdp-mouse, never download Chrome for Testing."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_CLICK_JS_FIRST" in text:
+        return data
+    old_av = (
+        "function av(){let a=at(),b=[...a.kits].filter(a=>a.installed&&a.kept)"
+        ".sort((a,b)=>b.wins-b.losses-(a.wins-a.losses)||b.wins-a.wins).map(a=>a.id);"
+        "for(let c of a.preferred)if(!b.includes(c))continue;return b.length?b:am.map(a=>a.id)}"
+    )
+    new_av = (
+        "function av(){/*FEDOR_CLICK_JS_FIRST*/let a=at(),b=[...a.kits].filter(a=>a.installed&&a.kept"
+        '&&"cdp-mouse"!==a.id&&"playwright-chromium"!==a.id&&!(a.wins<=0&&a.losses>=3))'
+        '.sort((a,b)=>("cdp-js"===a.id?-1:"cdp-js"===b.id?1:b.wins-b.losses-(a.wins-a.losses)||b.wins-a.wins))'
+        '.map(a=>a.id);if(!b.includes("cdp-js"))b.unshift("cdp-js");return b.length?b:["cdp-js"]}'
+    )
+    if old_av in text:
+        text = text.replace(old_av, new_av, 1)
+    old_loss = "e.losses+=1,e.lastError=String(c||\"\").slice(0,240),e.kept=!0"
+    new_loss = (
+        "e.losses+=1,e.lastError=String(c||\"\").slice(0,240),"
+        'e.kept=!("cdp-mouse"===a||"playwright-chromium"===a)||e.wins>0'
+    )
+    if old_loss in text:
+        text = text.replace(old_loss, new_loss, 1)
+    old_pw = (
+        'if("playwright-chromium"===a){let a=(0,aa.spawnSync)("npx",["--yes","playwright","install","chromium"],'
+        '{cwd:process.cwd(),encoding:"utf8",timeout:18e4,windowsHide:!0,shell:"win32"===process.platform})'
+    )
+    # replace the whole playwright-chromium installer block with a refusal
+    start = text.find('if("playwright-chromium"===a){')
+    if start >= 0 and "Chrome for Testing не качаю" not in text:
+        end = text.find('return{ok:!0,message:"скачал Chromium для Playwright"}', start)
+        if end >= 0:
+            end = text.find("}", end)
+            text = (
+                text[:start]
+                + 'if("playwright-chromium"===a)return{ok:!1,message:"Chrome for Testing не качаю — использую системный Edge/Chrome. Рабочий набор: cdp-js."}'
+                + text[end + 1 :]
+            )
+    text = text.replace(
+        "может скачать puppeteer-core / Chromium.",
+        "рабочий набор cdp-js. Chrome for Testing не качаю.",
+    )
+    return text.encode("utf-8")
+
+
+def patch_harness_chunk(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_HARNESS_LINT" in text:
+        return data
+    old_safe = 'bi=["make","npm-test","changelog","cache","version"]'
+    new_safe = 'bi=["make","npm-test","lint","changelog","cache","version"]/*FEDOR_HARNESS_LINT*/'
+    if old_safe in text:
+        text = text.replace(old_safe, new_safe, 1)
+    old_lint = 'else if("lint"===a)g("package.json",!1);'
+    new_lint = (
+        'else if("lint"===a)g("package.json",function(a){let b=n().join(a,"package.json"),c=bm(a);'
+        "if(!c||c.scripts&&c.scripts.lint)return!1;"
+        'let d={...c,scripts:{...(c.scripts||{}),lint:"node --check package.json"}};'
+        "(0,l.writeFileSync)(b,`${JSON.stringify(d,null,2)}\\n`,\"utf8\");return!0}(c));"
+    )
+    if old_lint in text:
+        text = text.replace(old_lint, new_lint, 1)
+    old_ensure = "if(!function(a){if(bl(a)||(0,l.existsSync)(n().join(a,\"package.json\"))"
+    # drop `||c.check` so lint/changelog still apply when npm-test already exists
+    text = text.replace("||c.check)return{wrote:[],report:c}", ")return{wrote:[],report:c}", 1)
+    return text.encode("utf-8")
+
+
+def patch_heavy_read_chunk(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_HEAVY_READ" in text:
+        return data
+    old = (
+        "let f=(0,l.fp)(e.subarray(0,524288).toString(\"utf8\")).split(\"\\n\"),"
+        "h=Math.max(1,b??1),i=c??f.length,j=f.slice(h-1,h-1+i),k=X(d);"
+        "return j.map((a,b)=>`${h+b}|${a}`).join(\"\\n\")+`\n[${k}]`}"
+    )
+    # tolerate the actual newline in the compiled source
+    marker = "let f=(0,l.fp)(e.subarray(0,524288).toString(\"utf8\")).split(\"\\n\")"
+    start = text.find(marker)
+    if start < 0:
+        marker = "let f=(0,l.fp)(e.subarray(0,524288).toString(\"utf8\")).split(\"\\n\")"
+        start = text.find('let f=(0,l.fp)(e.subarray(0,524288)')
+    if start < 0:
+        return data
+    end = text.find("async function af(", start)
+    if end < 0:
+        return data
+    helper = r"""let f=(0,l.fp)(e.subarray(0,524288).toString("utf8")),k=X(d);/*FEDOR_HEAVY_READ*/return(function(filePath,text,offset,limit){var lines=String(text||"").split(/\n/),start=Math.max(1,offset??1),maxLine=0,i=0;for(;i<lines.length;i++)if(lines[i].length>maxLine)maxLine=lines[i].length;var bytes=Buffer.byteLength(text,"utf8"),heavy=bytes>=20480||lines.length>=140||maxLine>=240,clip=function(s){return s.length<=180?s:s.slice(0,180)+"… [ещё "+(s.length-180)+" символов, полный в Super Memory]"};var want=limit&&limit>0&&limit<=80?limit:heavy?40:limit??lines.length,slice=lines.slice(start-1,start-1+want);try{var os=require("os"),path=require("path"),fs=require("fs"),crypto=require("crypto"),root=process.env.GROK_MEMORY_DIR?path.resolve(process.env.GROK_MEMORY_DIR):"win32"===process.platform?path.join(process.env.LOCALAPPDATA||path.join(os.homedir(),"AppData","Local"),"Fedor2","memory"):path.join(os.homedir(),".fedor2","memory"),dir=path.join(root,"files");fs.mkdirSync(dir,{recursive:!0});var key=crypto.createHash("sha1").update(String(filePath).replace(/\\/g,"/").toLowerCase()).digest("hex").slice(0,16),chunks=[],buf=[],chars=0,from=1,flush=function(to){buf.length&&(chunks.push({i:chunks.length+1,from:from,to:to,text:buf.join("\n").slice(0,1100)}),buf=[],chars=0,from=to+1)};lines.forEach(function(line,idx){var n=idx+1,piece=n+"|"+clip(line);chars+piece.length>1100&&buf.length&&flush(n-1);buf.push(piece);chars+=piece.length+1});flush(lines.length);var rec={path:filePath,bytes:bytes,lines:lines.length,maxLine:maxLine,updatedAt:Date.now(),chunks:chunks.slice(0,48)};if(heavy||maxLine>180){fs.writeFileSync(path.join(dir,key+".json"),JSON.stringify(rec)+"\n");try{var stateFile=path.join(root,"state.json"),state;try{state=JSON.parse(fs.readFileSync(stateFile,"utf8"))}catch(z){state={enabled:!0,facts:[],skills:[],fingerprints:[],dismissed:[]}}state.facts=Array.isArray(state.facts)?state.facts:[];var fact="файл "+filePath+": "+rec.lines+" строк, "+rec.bytes+" байт, самая длинная линия "+rec.maxLine+". Полный текст в Super Memory — memory_recall(\"файл "+path.basename(filePath)+"\") или grep.",found=state.facts.find(function(x){return String(x.text||"").startsWith("файл "+filePath+":")});found?(found.text=fact,found.hits=(found.hits||1)+1,found.updatedAt=rec.updatedAt):state.facts.unshift({id:"file_"+key,text:fact,hits:1,updatedAt:rec.updatedAt});rec.chunks.slice(0,6).forEach(function(ch){var t=("файл "+filePath+" часть "+ch.i+"/"+rec.chunks.length+" строки "+ch.from+"-"+ch.to+": "+ch.text).slice(0,1180),id="file_"+key+"_"+ch.i,prev=state.facts.find(function(x){return x.id===id});prev?(prev.text=t,prev.updatedAt=rec.updatedAt):state.facts.push({id:id,text:t,hits:1,updatedAt:rec.updatedAt})});state.facts=state.facts.slice(0,80);state.updatedAt=rec.updatedAt;fs.mkdirSync(root,{recursive:!0});fs.writeFileSync(stateFile,JSON.stringify(state,null,2)+"\n")}catch(z){}}}catch(z){}var body=slice.map(function(line,i){return start+i+"|"+clip(line)}).join("\n");if(heavy){var more=Math.max(0,lines.length-(start-1+slice.length));return"файл "+filePath+" — тяжёлый ("+bytes+" байт, "+lines.length+" строк, макс. линия "+maxLine+").\nПолный текст положил в Super Memory. Не читай его целиком снова.\nДальше: grep или memory_recall(\"файл "+String(filePath).split(/[\\/]/).pop()+"\").\n"+body+(more?"\n… ещё "+more+" строк в Super Memory":"")+"\n["+filePath+"]"}return body+(maxLine>180?"\nдлинные линии укоротил, полный текст в Super Memory":"")+"\n["+filePath+"]"})(k,f,b,c)}"""
+    text = text[:start] + helper + text[end:]
+    return text.encode("utf-8")
+
+
 def maybe_patch_packed(rel: str, data: bytes) -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/690.js"):
         data = patch_keep_going_chunk(data)
+        data = patch_click_chunk(data)
+        data = patch_harness_chunk(data)
+    if norm.endswith("server/chunks/432.js"):
+        data = patch_heavy_read_chunk(data)
     if norm.endswith("server/app/api/chat/route.js"):
         data = patch_chat_free_sku(data)
     return data
