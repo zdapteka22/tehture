@@ -11,10 +11,15 @@ function ok(name: string, cond: unknown) {
   console.log("ok  ", name);
 }
 
+const ads = readFileSync(path.join(process.cwd(), "scripts/generate-ads.py"), "utf8");
+ok("ads pay is ru card sbp crypto", /российской картой/.test(ads) && /СБП/.test(ads) && !/Платите через ЮMoney/.test(ads));
+
 const hta = installerHtaHtml();
 ok("ad banners listed", SETUP_AD_FILES.includes("ad-code.jpg") && SETUP_AD_FILES.includes("ad-free.jpg") && SETUP_AD_FILES.length >= 6);
 ok("hta has slideshow banners", /ad-code\.jpg/.test(hta) && /ad-free\.jpg/.test(hta) && /class="slides"/.test(hta));
 ok("hta is not cards page", !/Platyna|Fyatu|виртуальн\w* карт/i.test(hta));
+ok("hta has no yumoney pitch", !/ЮMoney|юмани|YooMoney|платите через ю/i.test(hta));
+ok("hta pay is ru card sbp crypto", /российской картой/i.test(hta) && /СБП/.test(hta) && /крипт/i.test(hta));
 ok("progress ui", /Ставлю кодер/.test(hta));
 ok("shortcut hint", /ярлык:? AA Coder Fedor 3\.0/.test(hta));
 

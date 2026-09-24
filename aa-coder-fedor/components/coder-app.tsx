@@ -1961,7 +1961,7 @@ export function CoderApp() {
           <MessageSquare className="size-4" />
         </RailButton>
         <RailButton
-          label="Ход работы"
+          label="Экран"
           active={workDockShown(computerOpen)}
           glow={computerActive}
           onClick={toggleWorkPanel}
@@ -2267,9 +2267,7 @@ export function CoderApp() {
               Помощник
             </button>
           </div>
-          <Button size="xs" variant="ghost" className="shrink-0 text-[#9d9d9d]" onClick={toggleWorkPanel}>
-            Ход
-          </Button>
+          {null}
           {!IS_FREE_EDITION && (
             <Button
               size="xs"
@@ -2653,7 +2651,7 @@ export function CoderApp() {
         {computerOpen ? (
           <>
             <SplitHandle
-              label="Ширина хода работы"
+              label="Ширина панели"
               onDelta={applyWorkWidthDelta}
               onReset={() => setWorkW(WORK_W_DEFAULT)}
               onDragStart={() => {
@@ -2712,11 +2710,11 @@ export function CoderApp() {
           className={`flex h-12 flex-1 flex-col items-center justify-center gap-0.5 text-[10px] ${
             computerOpen ? "text-white" : "text-[#9d9d9d]"
           }`}
-          aria-label="Ход работы"
+          aria-label="Экран"
           onClick={toggleWorkPanel}
         >
           <Monitor className="size-4" />
-          Ход
+          Экран
         </button>
         <button
           type="button"
@@ -2785,7 +2783,7 @@ export function CoderApp() {
                       : "10 сообщений каждые 2 часа на Free — как у Grok."}
                   </p>
                   <p className="text-[11px] leading-5 text-zinc-500">
-                    ЮMoney · СБП · USDT / BTC / TON. Реквизиты — в «Приём оплаты». Проверка по факту платежа.
+                    Оплата российской картой, СБП и криптовалютой. Реквизиты — в «Приём оплаты».
                   </p>
                   <div className="flex gap-2">
                     <Input

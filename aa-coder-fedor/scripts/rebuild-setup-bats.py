@@ -131,6 +131,10 @@ INJECT = {
     "lib/tools.ts": ROOT / "lib" / "tools.ts",
     "lib/reflexion.ts": ROOT / "lib" / "reflexion.ts",
     "coder-v2/src/hub.cjs": ROOT / "coder-v2" / "src" / "hub.cjs",
+    "lib/installer-hta.ts": ROOT / "lib" / "installer-hta.ts",
+    "components/coder-app.tsx": ROOT / "components" / "coder-app.tsx",
+    "components/work-dock.tsx": ROOT / "components" / "work-dock.tsx",
+    "components/grok-mark.tsx": ROOT / "components" / "grok-mark.tsx",
 }
 NEXT_OVERRIDE = Path(os.environ.get("FEDOR_NEXT_OVERRIDE") or ROOT / ".next")
 
@@ -322,6 +326,46 @@ def patch_heavy_read_chunk(data: bytes) -> bytes:
     return text.encode("utf-8")
 
 
+def patch_ui_copy(data: bytes) -> bytes:
+    """No 'ход' labels in the chrome; installer/pay pitch is RU card + SBP + crypto."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_NO_HOD_LABEL" not in text and ("Ход" in text or "ЮMoney" in text):
+        text = text.replace(
+            'смотрите строку над чатом и окно Ход',
+            'смотрите строку над чатом',
+        )
+        text = text.replace("Ширина хода работы", "Ширина панели")
+        text = text.replace("Открепить ход работы", "Открепить панель")
+        text = text.replace("Закрепить ход работы", "Закрепить панель")
+        text = text.replace("Закрыть ход работы", "Закрыть панель")
+        text = text.replace("Ход работы", "Экран")
+        # header button next to Free — drop it
+        text = text.replace(
+            ',(0,a.jsx)(M.$,{size:"xs",variant:"ghost",className:"shrink-0 text-[#9d9d9d]",onClick:ae,children:"Ход"})',
+            "",
+        )
+        text = text.replace(',children:"Ход"}', ',children:"Экран"}')
+        text = text.replace(',"Ход"]', ',"Экран"]')
+        text = text.replace(
+            "ЮMoney \\xb7 СБП \\xb7 USDT / BTC / TON. Реквизиты — в \\xabПриём оплаты\\xbb. Проверка по факту платежа.",
+            "Оплата российской картой, СБП и криптовалютой. Реквизиты — в \\xabПриём оплаты\\xbb.",
+        )
+        text = text.replace(
+            "ЮMoney · СБП · USDT / BTC / TON. Реквизиты — в «Приём оплаты». Проверка по факту платежа.",
+            "Оплата российской картой, СБП и криптовалютой. Реквизиты — в «Приём оплаты».",
+        )
+        text = text.replace("ЮMoney / ЮKassa и крипта.", "Российская карта, СБП и крипта.")
+        if "Ход" not in text or "children:\"Ход\"" not in text:
+            text = text.replace("FEDOR_NO_HOD_LABEL", "FEDOR_NO_HOD_LABEL")
+            if "FEDOR_NO_HOD_LABEL" not in text:
+                text = "/*FEDOR_NO_HOD_LABEL*/" + text
+        return text.encode("utf-8")
+    return data
+
+
 def maybe_patch_packed(rel: str, data: bytes) -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/690.js"):
@@ -332,6 +376,10 @@ def maybe_patch_packed(rel: str, data: bytes) -> bytes:
         data = patch_heavy_read_chunk(data)
     if norm.endswith("server/app/api/chat/route.js"):
         data = patch_chat_free_sku(data)
+    if "/static/chunks/" in norm and norm.endswith(".js"):
+        data = patch_ui_copy(data)
+    if "pay/page" in norm and norm.endswith(".js"):
+        data = patch_ui_copy(data)
     return data
 
 
@@ -427,9 +475,6 @@ AD_FILES = [
 
 
 def ensure_ads() -> None:
-    missing = [name for name in AD_FILES if not (AD_DIR / name).exists()]
-    if not missing:
-        return
     subprocess.run(["python3", str(ROOT / "scripts" / "generate-ads.py")], cwd=ROOT, check=True)
     still = [name for name in AD_FILES if not (AD_DIR / name).exists()]
     if still:
