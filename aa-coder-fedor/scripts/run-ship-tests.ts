@@ -12,6 +12,7 @@ const SHIP = [
   "test:click-outcome",
   "test:skills",
   "test:ngp",
+  "test:installer-ui",
   "test:local-llm",
   "test:router",
   "test:paid",
