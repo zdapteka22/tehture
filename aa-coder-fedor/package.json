@@ -44,6 +44,7 @@
     "test:click": "npx tsx scripts/test-click-kit.ts",
     "test:click-outcome": "npx tsx scripts/test-click-outcome.ts",
     "test:skills": "npx tsx scripts/test-skill-ledger.ts",
+    "test:ngp": "npx tsx scripts/test-ngp.ts",
     "test:agent20": "npx tsx scripts/test-agent-20.ts",
     "test:harness": "npx tsx scripts/test-build-harness.ts",
     "coder2": "node coder-v2/bin/coder2.cjs",

@@ -39,6 +39,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { answerFromMemory, getMemoryPromptBlock, retrieveGrounding } from "../super-memory";
 import { getSkillPromptBlock } from "../skill-ledger";
+import { getNgpPromptBlock, observeNgpUserText } from "../ngp";
 import { isSecretPath } from "../guard";
 
 export type FyodorHooks = {
@@ -136,7 +137,7 @@ function collectFileSnippets(repo: string, paths: string[]): Array<{ path: strin
 }
 
 function implementerMemory(userText: string): string {
-  return [getMemoryPromptBlock(), getSkillPromptBlock(userText), retrieveGrounding(userText)]
+  return [getMemoryPromptBlock(), getSkillPromptBlock(userText), retrieveGrounding(userText), getNgpPromptBlock(userText)]
     .filter(Boolean)
     .join("\n");
 }
@@ -216,6 +217,7 @@ export async function handleFyodor(request: FyodorHandleRequest): Promise<Fyodor
 
 async function handleFyodorInner(request: FyodorHandleRequest): Promise<FyodorHandleResult> {
   throwIfAborted(request.signal);
+  observeNgpUserText(request.userText);
   const repo = pathResolve(request.repo || getWorkspaceRoot());
   const send = request.send;
   const jobId = request.jobId?.trim() || undefined;

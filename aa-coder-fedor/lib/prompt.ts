@@ -8,6 +8,7 @@ import { getWorkingMemory } from "./decision-log";
 import { colleaguePromptBlock } from "./colleague/prompt";
 import type { AppRole } from "./colleague/types";
 import { getSkillPromptBlock } from "./skill-ledger";
+import { getNgpPromptBlock } from "./ngp";
 
 export function buildSystemPrompt(listing: string, role: AppRole = "coder", task = ""): string {
   const peer = getPeerStatus();
@@ -89,7 +90,7 @@ ${listing || "(empty)"}
 ${getMemoryPromptBlock()}
 ${getSkillPromptBlock(task)}
 ${getWorkingMemory() ? `\n<working_memory>\n${getWorkingMemory()}\n</working_memory>\n` : ""}
-${getCoachPromptBlock()}
+${getCoachPromptBlock()}${getNgpPromptBlock(task)}
 `;
 }
 

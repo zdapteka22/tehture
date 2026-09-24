@@ -3,6 +3,7 @@ import { BOUNDARY_STOP, shouldStopOnBoundary } from "../agent-boundary";
 import { executeTool, parseToolArgs, GROK_TOOLS } from "../tools";
 import { observeToolForMemory } from "../super-memory";
 import { concludeSkillTask, getSkillTask, recordSkillFromTool, setSkillTask } from "../skill-ledger";
+import { observeNgpUserText } from "../ngp";
 import { completeOnce, type CompleteOnceOptions, type UpstreamToolCall } from "../llm";
 import { actionFingerprint, FailureMemory, looksFailed, verbalLesson } from "../reflexion";
 import type { ProviderId, TodoItem } from "../types";
@@ -62,6 +63,7 @@ export async function runToolAgent(options: {
     : Math.max(1, options.maxTurns);
   const failures = new FailureMemory();
   setSkillTask(options.userGoal || "");
+  observeNgpUserText(options.userGoal || "");
 
   const runModel = async () => {
     let emitted = false;
