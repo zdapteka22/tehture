@@ -15,7 +15,7 @@ export type NgpState = {
   updatedAt: number;
 };
 
-const HOT = 400;
+/** Common lane keeps every note. Repeats only raise votes. No hot-slice delete. */
 
 export function ngpRoot(): string {
   const override = process.env.FEDOR_NGP_DIR?.trim();
@@ -86,7 +86,6 @@ export function rememberNgp(note: Omit<NgpNote, "votes" | "at"> & { votes?: numb
     at: Date.now(),
   };
   state.notes.push(created);
-  if (state.notes.length > HOT) state.notes = state.notes.slice(-HOT);
   writeNgp(note.level, state);
   return created;
 }

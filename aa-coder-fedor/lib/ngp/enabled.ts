@@ -3,7 +3,11 @@ import path from "node:path";
 
 import { ngpRoot } from "./store";
 
-/** Marker file. If it exists, the experimental lane is on. */
+/** Marker file. If it exists, the common lane was turned off by the user. */
+export function ngpOffFile(): string {
+  return path.join(ngpRoot(), "off");
+}
+
 export function ngpSwitchFile(): string {
   return path.join(ngpRoot(), "enabled");
 }
@@ -15,26 +19,34 @@ function envOverride(): boolean | null {
   return null;
 }
 
-/** Off unless the user turned it on. The shipped coder stays as-is. */
+/** Common version: on unless the user turned it off. Super Memory and clicks stay anyway. */
 export function isNgpOn(): boolean {
   const forced = envOverride();
   if (forced !== null) return forced;
   try {
-    return existsSync(ngpSwitchFile());
+    if (existsSync(ngpOffFile())) return false;
   } catch {
-    return false;
+    return true;
   }
+  return true;
 }
 
 export function enableNgp(): void {
   mkdirSync(ngpRoot(), { recursive: true });
+  try {
+    unlinkSync(ngpOffFile());
+  } catch {
+    // already on
+  }
   writeFileSync(ngpSwitchFile(), "on\n", "utf8");
 }
 
 export function disableNgp(): void {
+  mkdirSync(ngpRoot(), { recursive: true });
+  writeFileSync(ngpOffFile(), "off\n", "utf8");
   try {
     unlinkSync(ngpSwitchFile());
   } catch {
-    // already off
+    // ignore
   }
 }
