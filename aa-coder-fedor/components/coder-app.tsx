@@ -789,6 +789,7 @@ export function CoderApp() {
   const [accountToken, setAccountToken] = useState("");
   const [account, setAccount] = useState<HubUserView | null>(null);
   const [accountEmail, setAccountEmail] = useState("");
+  const [freeSku, setFreeSku] = useState(IS_FREE_EDITION);
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; url?: string } | null>(null);
   const [settings, setSettings] = useState<ConnectionSettings>(() => ({
     ...DEFAULT_SETTINGS,
@@ -994,15 +995,25 @@ export function CoderApp() {
   }, [settingsOpen, loadMemory, loadCoach]);
 
   useEffect(() => {
-    if (studioAccountBooted) return;
-    studioAccountBooted = true;
-    const saved = readAccountToken(ACCOUNT_KEY);
-    if (saved) {
-      setAccountToken(saved);
-      void loadAccount(saved);
-      return;
-    }
-    void registerAccount().catch(() => undefined);
+    void fetch("/api/sku")
+      .then((response) => response.json())
+      .then((payload: { free?: boolean }) => {
+        setFreeSku(Boolean(payload.free));
+        return Boolean(payload.free);
+      })
+      .catch(() => IS_FREE_EDITION)
+      .then((free) => {
+        if (studioAccountBooted) return;
+        studioAccountBooted = true;
+        if (free) return;
+        const saved = readAccountToken(ACCOUNT_KEY);
+        if (saved) {
+          setAccountToken(saved);
+          void loadAccount(saved);
+          return;
+        }
+        void registerAccount().catch(() => undefined);
+      });
   }, [loadAccount, registerAccount]);
 
   useEffect(() => {
@@ -1588,13 +1599,14 @@ export function CoderApp() {
     stopThread(targetId, false);
     setPendingFiles([]);
     let token = accountToken || readAccountToken(ACCOUNT_KEY);
-    if (!IS_FREE_EDITION && !token) {
+    if (!freeSku && !token) {
       try {
         token = (await registerAccount()) || "";
       } catch {
         token = "";
       }
     }
+    openWorkPanel();
     const prior = seedMessages ?? threads.find((thread) => thread.id === threadId)?.messages ?? [];
     stickToBottomRef.current = true;
     setAtBottom(true);
@@ -1631,7 +1643,7 @@ export function CoderApp() {
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !contentType.includes("text/event-stream")) {
         const payload = (await response.json().catch(() => null)) as PayGatePayload | null;
-        if (shouldOpenPay(payload, response.status)) {
+        if (!freeSku && shouldOpenPay(payload, response.status)) {
           openPayPage(payload?.quota?.planId === "free" ? "trial" : "quota", payload?.payUrl);
         }
         throw new Error(payload?.error || `Request failed (${response.status})`);
@@ -1961,7 +1973,7 @@ export function CoderApp() {
           <MessageSquare className="size-4" />
         </RailButton>
         <RailButton
-          label="Экран"
+          label="Ход"
           active={workDockShown(computerOpen)}
           glow={computerActive}
           onClick={toggleWorkPanel}
@@ -2267,19 +2279,14 @@ export function CoderApp() {
               Помощник
             </button>
           </div>
-          {null}
-          {!IS_FREE_EDITION && (
-            <Button
-              size="xs"
-              variant="ghost"
-              className="hidden max-w-[14rem] truncate text-[#b8d4ff] sm:inline-flex"
-              onClick={() => openPayPage(account?.quota.blocked ? "quota" : "trial")}
-            >
-              {account?.quota
-                ? `${account.quota.planName} · ${account.quota.tokensLeft.toLocaleString("ru-RU")}`
-                : "Тарифы"}
-            </Button>
-          )}
+          <Button
+            size="xs"
+            variant="ghost"
+            className="shrink-0 text-[#9d9d9d]"
+            onClick={toggleWorkPanel}
+          >
+            Ход
+          </Button>
           <Button size="xs" variant="ghost" className="hidden text-[#9d9d9d] sm:inline-flex" onClick={() => setSettingsOpen(true)}>
             Settings
           </Button>
@@ -2651,7 +2658,7 @@ export function CoderApp() {
         {computerOpen ? (
           <>
             <SplitHandle
-              label="Ширина панели"
+              label="Ширина хода работы"
               onDelta={applyWorkWidthDelta}
               onReset={() => setWorkW(WORK_W_DEFAULT)}
               onDragStart={() => {
@@ -2710,11 +2717,11 @@ export function CoderApp() {
           className={`flex h-12 flex-1 flex-col items-center justify-center gap-0.5 text-[10px] ${
             computerOpen ? "text-white" : "text-[#9d9d9d]"
           }`}
-          aria-label="Экран"
+          aria-label="Ход"
           onClick={toggleWorkPanel}
         >
           <Monitor className="size-4" />
-          Экран
+          Ход
         </button>
         <button
           type="button"
@@ -2769,11 +2776,11 @@ export function CoderApp() {
             <div className="grid gap-2 rounded-lg border border-[#3c3c3c] bg-[#1e1e1e] p-3">
               <div className="flex items-center gap-2 text-sm text-[#e8e8e8]">
                 <ShieldCheck className="size-4 text-[#b48eff]" />
-                {IS_FREE_EDITION ? "Бесплатный Fedor 3.0" : account?.quota.planName || "Пробный"}
+                {freeSku ? "Бесплатный Fedor 3.0" : account?.quota.planName || "Пробный"}
               </div>
-              {IS_FREE_EDITION ? (
+              {freeSku ? (
                 <p className="text-[11px] leading-5 text-zinc-500">
-                  Отдельная сборка. Лимита сообщений нет.
+                  Отдельная сборка. Счётчика ходов нет, лимита сообщений нет.
                 </p>
               ) : (
                 <>

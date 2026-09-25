@@ -61,6 +61,14 @@ async function main() {
 
     const store = (await import("node:fs")).readFileSync(path.join(prev.cwd, "lib/commerce/store.ts"), "utf8");
     ok("meter skips free sku", store.includes("if (isFreeEdition())"));
+
+    const sku = (await import("node:fs")).readFileSync(path.join(prev.cwd, "app/api/sku/route.ts"), "utf8");
+    ok("sku route uses runtime helper", sku.includes("isFreeEdition()"));
+
+    const chrome = (await import("node:fs")).readFileSync(path.join(prev.cwd, "components/coder-app.tsx"), "utf8");
+    ok("chrome asks /api/sku", chrome.includes("/api/sku"));
+    ok("chrome leftover uses freeSku", chrome.includes("freeSku") && !/if \(!IS_FREE_EDITION && !token\)/.test(chrome));
+    ok("chrome has no header leftover chip", !/planName} ·/.test(chrome));
   } finally {
     restore();
     rmSync(dir, { recursive: true, force: true });

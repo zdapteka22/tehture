@@ -64,6 +64,8 @@ void payConfigPath;
 const chrome = readFileSync(path.join(root, "components/coder-app.tsx"), "utf8");
 ok("chrome fallback is Пробный", /planName \|\| "Пробный"/.test(chrome));
 ok("chrome no Тариф Free", !/Тариф Free/.test(chrome));
+ok("chrome keeps ход button", /onClick=\{toggleWorkPanel\}/.test(chrome) && /Ход/.test(chrome));
+ok("chrome leftover only behind freeSku", /freeSku \?/.test(chrome));
 
 const hta = readFileSync(path.join(root, "lib/installer-hta.ts"), "utf8");
 ok("hta paid copy is Fedor plans", /Fedor Lite/.test(hta));

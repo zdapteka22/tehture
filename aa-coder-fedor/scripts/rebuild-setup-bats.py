@@ -151,6 +151,9 @@ INJECT = {
     "components/coder-app.tsx": ROOT / "components" / "coder-app.tsx",
     "components/work-dock.tsx": ROOT / "components" / "work-dock.tsx",
     "components/grok-mark.tsx": ROOT / "components" / "grok-mark.tsx",
+    "lib/live-status.ts": ROOT / "lib" / "live-status.ts",
+    "lib/types.ts": ROOT / "lib" / "types.ts",
+    "app/api/sku/route.ts": ROOT / "app" / "api" / "sku" / "route.ts",
 }
 NEXT_OVERRIDE = Path(os.environ.get("FEDOR_NEXT_OVERRIDE") or ROOT / ".next")
 
@@ -342,29 +345,35 @@ def patch_heavy_read_chunk(data: bytes) -> bytes:
     return text.encode("utf-8")
 
 
-def patch_ui_copy(data: bytes) -> bytes:
-    """No 'ход' labels in the chrome; installer/pay pitch is RU card + SBP + crypto."""
+HOD_REASON_BLOCK = (
+    '(0,a.jsxs)("section",{className:"mb-3",children:['
+    '(0,a.jsx)("div",{className:"text-[10px] tracking-wide text-[#8a7ab8] uppercase",children:"Рассуждения агентов"}),'
+    'r.length?(0,a.jsx)("ol",{className:"mt-1 space-y-2",children:r.slice(-12).map((e,t)=>(0,a.jsxs)("li",'
+    '{className:"rounded-md bg-black/30 px-2 py-1.5",children:['
+    '(0,a.jsxs)("div",{className:"text-[12px] text-white",children:[e.label||e.role,'
+    '(0,a.jsx)("span",{className:"ml-2 text-[10px] uppercase text-[#8a8aa0]",'
+    'children:"running"===e.status?"думает":"handoff"===e.status?"передал":"сказал"})]}),'
+    '(0,a.jsx)("p",{className:"mt-0.5 whitespace-pre-wrap text-[13px] leading-5 text-[#e8e8f0]",'
+    'children:e.note&&e.note.trim()||("running"===e.status?"рассуждение ещё не пришло":"молчит — текста нет")})'
+    ']},`${e.role}-${t}-${e.status}`))}):(0,a.jsx)("p",{className:"mt-1 text-[12px] leading-5 text-[#6a6a72]",'
+    'children:e?"трест ещё не высказался":"рассуждений нет — агенты молчат"})]}),'
+    '(0,a.jsxs)("section",{className:"mb-3",children:['
+    '(0,a.jsx)("div",{className:"text-[10px] tracking-wide text-[#8a7ab8] uppercase",children:"Что делают"}),'
+    'i.filter(e=>"running"===e.status).length?(0,a.jsx)("ul",{className:"mt-1 space-y-1 font-mono text-[11px] leading-5 text-[#e8dcff]",'
+    'children:i.filter(e=>"running"===e.status).map(e=>(0,a.jsx)("li",{children:"▶ "+ea(e)},e.id))})'
+    ':(0,a.jsx)("p",{className:"mt-1 text-[12px] leading-5 text-[#6a6a72]",'
+    'children:e?"инструмент сейчас не вызван":"ничего не делают"})]}),'
+)
+
+
+def patch_ui_copy(data: bytes, sku: str = "paid") -> bytes:
+    """Pay pitch is RU card + SBP + crypto. Work pane is «Ход» with agent reasoning."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
-    if "FEDOR_NO_HOD_LABEL" not in text and ("Ход" in text or "ЮMoney" in text):
-        text = text.replace(
-            'смотрите строку над чатом и окно Ход',
-            'смотрите строку над чатом',
-        )
-        text = text.replace("Ширина хода работы", "Ширина панели")
-        text = text.replace("Открепить ход работы", "Открепить панель")
-        text = text.replace("Закрепить ход работы", "Закрепить панель")
-        text = text.replace("Закрыть ход работы", "Закрыть панель")
-        text = text.replace("Ход работы", "Экран")
-        # header button next to Free — drop it
-        text = text.replace(
-            ',(0,a.jsx)(M.$,{size:"xs",variant:"ghost",className:"shrink-0 text-[#9d9d9d]",onClick:ae,children:"Ход"})',
-            "",
-        )
-        text = text.replace(',children:"Ход"}', ',children:"Экран"}')
-        text = text.replace(',"Ход"]', ',"Экран"]')
+    changed = False
+    if "ЮMoney" in text or "SuperGrok" in text or "Тариф Free" in text:
         text = text.replace(
             "ЮMoney \\xb7 СБП \\xb7 USDT / BTC / TON. Реквизиты — в \\xabПриём оплаты\\xbb. Проверка по факту платежа.",
             "Оплата российской картой, СБП и криптовалютой. Реквизиты — в \\xabПриём оплаты\\xbb.",
@@ -383,15 +392,62 @@ def patch_ui_copy(data: bytes) -> bytes:
         text = text.replace("SuperGrok", "Fedor")
         text = text.replace('children:"ЮMoney"', 'children:"Карта"')
         text = text.replace("Оплата: ЮMoney и крипта", "Оплата российской картой, СБП и криптой")
-        if "Ход" not in text or "children:\"Ход\"" not in text:
-            text = text.replace("FEDOR_NO_HOD_LABEL", "FEDOR_NO_HOD_LABEL")
-            if "FEDOR_NO_HOD_LABEL" not in text:
-                text = "/*FEDOR_NO_HOD_LABEL*/" + text
-        return text.encode("utf-8")
-    return data
+        changed = True
+    hod_btn = (
+        ',(0,a.jsx)(M.$,{size:"xs",variant:"ghost",className:"shrink-0 text-[#9d9d9d]",onClick:ae,children:"Ход"})'
+    )
+    if 'children:"Ход"' not in text and "sm:inline-flex" in text and "Settings" in text:
+        needle = ',(0,a.jsx)(M.$,{size:"xs",variant:"ghost",className:"hidden text-[#9d9d9d] sm:inline-flex"'
+        if needle in text and hod_btn not in text:
+            text = text.replace(needle, hod_btn + needle, 1)
+            changed = True
+    chip = (
+        '!L.j5&&(0,a.jsx)(M.$,{size:"xs",variant:"ghost",className:"hidden max-w-[14rem] truncate text-[#b8d4ff] sm:inline-flex"'
+    )
+    if chip in text:
+        text = text.replace(chip, 'false&&(0,a.jsx)(M.$,{size:"xs",variant:"ghost",className:"hidden max-w-[14rem] truncate text-[#b8d4ff] sm:inline-flex"', 1)
+        changed = True
+    if sku == "free" and "L.j5" in text and "Бесплатный Fedor 3.0" in text:
+        text = text.replace("L.j5", "!0")
+        changed = True
+    if 'catch{r=""}let n=s??' in text and "s7();let n=s??" not in text:
+        text = text.replace('catch{r=""}let n=s??', 'catch{r=""}s7();let n=s??', 1)
+        changed = True
+    old_note = 'function ei(e){let t=ee(e.note||"",80);return!t||es(t)?"":/(читаю|пишу|гоняю|тест|записал|переключаюсь|правлю)/i.test(t)?t:""}'
+    new_note = 'function ei(e){let t=ee(e.note||"",140);return!t||es(t)?"":t}'
+    if old_note in text:
+        text = text.replace(old_note, new_note, 1)
+        changed = True
+    if ':"ещё не открыл файл и не запустил команду"}' in text:
+        text = text.replace(
+            ':"ещё не открыл файл и не запустил команду"}',
+            ':"агенты ничего не делают"}',
+            1,
+        )
+        changed = True
+    if 'children:e?"идёт сейчас":"простой"}' in text:
+        text = text.replace(
+            'children:e?"идёт сейчас":"простой"}',
+            'children:e?"агенты работают":"агенты ничего не делают"}',
+            1,
+        )
+        changed = True
+    scroll = '(0,a.jsxs)("div",{className:"min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2",children:[u.length?'
+    if "Рассуждения агентов" not in text and scroll in text:
+        text = text.replace(scroll, scroll.replace("children:[u.length?", "children:[" + HOD_REASON_BLOCK + "u.length?"), 1)
+        changed = True
+    if "FEDOR_HOD_BACK" not in text and ("Экран" in text or "Ход" in text or "идёт сейчас" in text):
+        text = text.replace('"aria-label":"Экран"', '"aria-label":"Ход работы"')
+        text = text.replace('label:"Экран"', 'label:"Ход"')
+        text = text.replace('children:"Экран"', 'children:"Ход работы"')
+        text = text.replace(',"Экран"]', ',"Ход"]')
+        if "/*FEDOR_HOD_BACK*/" not in text:
+            text = "/*FEDOR_HOD_BACK*/" + text
+        changed = True
+    return text.encode("utf-8") if changed else data
 
 
-def maybe_patch_packed(rel: str, data: bytes) -> bytes:
+def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/690.js"):
         data = patch_keep_going_chunk(data)
@@ -402,13 +458,13 @@ def maybe_patch_packed(rel: str, data: bytes) -> bytes:
     if norm.endswith("server/app/api/chat/route.js"):
         data = patch_chat_free_sku(data)
     if "/static/chunks/" in norm and norm.endswith(".js"):
-        data = patch_ui_copy(data)
+        data = patch_ui_copy(data, sku)
     if "pay/page" in norm and norm.endswith(".js"):
-        data = patch_ui_copy(data)
+        data = patch_ui_copy(data, sku)
     return data
 
 
-def inject_tree(dest: zipfile.ZipFile, written: set[str], root: Path, prefix: str) -> int:
+def inject_tree(dest: zipfile.ZipFile, written: set[str], root: Path, prefix: str, sku: str = "paid") -> int:
     count = 0
     if not root.exists():
         return 0
@@ -421,7 +477,7 @@ def inject_tree(dest: zipfile.ZipFile, written: set[str], root: Path, prefix: st
         if path.name in SKIP_NEXT_NAMES:
             continue
         rel = f"{prefix}/{path.relative_to(root).as_posix()}"
-        dest.writestr(rel, maybe_patch_packed(rel, path.read_bytes()))
+        dest.writestr(rel, maybe_patch_packed(rel, path.read_bytes(), sku))
         written.add(rel)
         count += 1
     return count
@@ -451,7 +507,7 @@ def patch_zip(zip_bytes: bytes, sku: str = "paid") -> bytes:
                 data = with_baked_key(ELECTRON_MAIN.read_bytes())
             else:
                 data = with_baked_key(data)
-            dest.writestr(info, maybe_patch_packed(rel, data))
+            dest.writestr(info, maybe_patch_packed(rel, data, sku))
             written.add(rel)
         for rel, data in inject.items():
             if rel in written:
@@ -459,7 +515,7 @@ def patch_zip(zip_bytes: bytes, sku: str = "paid") -> bytes:
             dest.writestr(rel, with_baked_key(data))
             written.add(rel)
         if replace_next:
-            inject_tree(dest, written, NEXT_OVERRIDE, ".next")
+            inject_tree(dest, written, NEXT_OVERRIDE, ".next", sku)
         dest.writestr(".fedor-sku", f"{sku}\n".encode("utf-8"))
         dest.writestr(".next/FEDOR_SKU", f"{sku}\n".encode("utf-8"))
         written.add(".fedor-sku")

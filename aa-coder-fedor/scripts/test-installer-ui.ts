@@ -49,4 +49,11 @@ const launcher = readFileSync(path.join(process.cwd(), "lib/desktop-launcher.ts"
 ok("launcher uses electron dot", /"\$\{electronExe\}" \./.test(launcher));
 ok("launcher skips public desktop write", /Never write to Public Desktop/.test(launcher));
 
+const pack = readFileSync(path.join(process.cwd(), "scripts/rebuild-setup-bats.py"), "utf8");
+ok("pack restores ход button", pack.includes('children:"Ход"'));
+ok("pack hides leftover chip", pack.includes("false&&(0,a.jsx)(M.$,{size:\"xs\""));
+ok("pack injects agent reasoning", pack.includes("Рассуждения агентов") && pack.includes("Что делают"));
+ok("pack opens ход on send", pack.includes("s7();let n=s??"));
+ok("pack patches with sku", pack.includes("def patch_ui_copy(data: bytes, sku: str = \"paid\")"));
+
 console.log("installer-ui ok");
