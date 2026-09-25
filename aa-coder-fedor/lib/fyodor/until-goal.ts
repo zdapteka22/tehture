@@ -8,6 +8,7 @@ import {
   looksLikeOpen,
   looksLikeOperate,
   looksLikeSimpleHostTask,
+  looksLikeHangComplaint,
   looksLikeStopCommand,
   looksLikeWrite,
   looksUnfinished,
@@ -160,6 +161,7 @@ export function shouldNudgeUntilGoal(opts: {
   if (looksLikeNarratingWork(opts.content) || looksUnfinished(opts.content) || looksLikeAskingUser(opts.content)) {
     return true;
   }
+  if (looksLikeHangComplaint(opts.userText) && !didPcWork(opts.usedTools, opts.changedPaths)) return true;
   if (missingGoalWork(opts.userText, opts.usedTools, opts.changedPaths)) return true;
 
   const liveSite =

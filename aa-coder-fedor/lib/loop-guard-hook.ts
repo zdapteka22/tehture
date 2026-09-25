@@ -118,7 +118,14 @@ export function decideGuardStop(assistantText: string, userText = ""): GuardDeci
     `--assistant=${String(assistantText || "").slice(0, 500)}`,
     `--user=${rawUser.slice(0, 500)}`,
   ]);
-  return parseDecision(r.out, r.status);
+  if (!String(r.out || "").trim()) {
+    return { keepGoing: true, verdict: "CONTINUE", action: "CONTINUE", reason: "guard_silent", restarted: false };
+  }
+  const parsed = parseDecision(r.out, r.status);
+  if (/no_reason|open_goal|restart_limit|guard_silent/i.test(parsed.reason) || parsed.verdict === "CONTINUE") {
+    return { ...parsed, keepGoing: true, verdict: parsed.verdict || "CONTINUE" };
+  }
+  return parsed;
 }
 
 export function guardTick(): void {

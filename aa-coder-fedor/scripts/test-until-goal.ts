@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { looksLikeHangComplaint, taskNeedsWork } from "../lib/fyodor/intent";
 import {
   countWorkMoves,
   isLiveOutcomeJob,
@@ -137,6 +138,21 @@ ok(
     content: "Массив — это список значений.",
     usedTools: [],
   }) === false,
+);
+
+ok("hang complaint is work", taskNeedsWork("не процесы а имено ты опять завис"));
+ok("hang complaint detected", looksLikeHangComplaint("не процесы а имено ты опять завис"));
+ok(
+  "hang + скажи чини keeps going",
+  nudge({
+    userText: "не процесы а имено ты опять завис",
+    content: "скажи чини",
+    usedTools: [],
+  }) === true,
+);
+ok(
+  "ordinary chat still not hang",
+  !looksLikeHangComplaint("что такое массив") && !taskNeedsWork("что такое массив"),
 );
 
 const crew = readFileSync(path.join(process.cwd(), "lib/crew/run.ts"), "utf8");

@@ -36,15 +36,22 @@ export function hasDoneCriteria(state = {}) {
   return (state.done_when || []).some((x) => String(x || '').trim());
 }
 
+export function isHangComplaint(text) {
+  return /(завис|зависа|молч(ит|ишь)|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|почему (ты )?встал|опять завис|hung\b|stuck again)/i.test(
+    String(text || ''),
+  );
+}
+
 export function isFollowUpText(text, prevGoal = '') {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return true;
+  if (isHangComplaint(t)) return true;
   if (!String(prevGoal || '').trim()) return false;
   if (significantPrefix(prevGoal) === significantPrefix(t)) return true;
   if (t.length <= 16) return true;
   if (/[?]/.test(t) && t.length <= 160) return true;
   if (/^(что|как|почему|зачем|кто|где|чё|че так|а что|ну что)\b/i.test(t)) return true;
-  if (/(завис|долго|молч|опять встал|не процесс)/i.test(t)) return true;
+  if (/(завис|долго|молч|опять встал|не процес)/i.test(t)) return true;
   return false;
 }
 
@@ -345,7 +352,7 @@ function readState(dir, cfg) {
 
 function writeState(dir, state) {
   const file = paths(dir).state;
-  const body = JSON.stringify(state, null, 2);
+  const body = JSON.stringify(state, null, 2) + '\n';
   const tmp = file + '.tmp';
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, body, 'utf8');
@@ -354,6 +361,14 @@ function writeState(dir, state) {
   } catch {
     fs.writeFileSync(file, body, 'utf8');
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+  try {
+    const read = fs.readFileSync(file, 'utf8');
+    if (!read.includes(`"loops": ${Number(state.loops) || 0}`)) {
+      fs.writeFileSync(file, body, 'utf8');
+    }
+  } catch {
+    try { fs.writeFileSync(file, body, 'utf8'); } catch { /* ignore */ }
   }
 }
 
@@ -438,6 +453,7 @@ export function beginGoal(state, goal, doneWhen) {
   if (follow) {
     const next = { ...state };
     if (incoming.length) next.done_when = incoming;
+    if (!String(next.goal || '').trim()) next.goal = nextGoal;
     next.verdict = 'CONTINUE';
     next.reason = 'follow-up';
     next.stop_reason = null;
@@ -833,6 +849,7 @@ function selftest() {
   pass &= ok('ход с инструментом не no_state_change', c.reason !== 'no_state_change');
 
   pass &= ok('вопрос это follow-up', isFollowUpText('ты опять завис', 'почини оплату'));
+  pass &= ok('жалоба завис без прошлой цели тоже follow-up', isFollowUpText('не процесы а имено ты опять завис', ''));
   pass &= ok('новая задача не follow-up', !isFollowUpText('новая задача: оплата картой', 'вчерашняя цель про клик'));
 
   const persistDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-persist-'));

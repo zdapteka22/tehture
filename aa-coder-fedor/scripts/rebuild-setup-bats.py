@@ -604,8 +604,46 @@ def patch_ask_poll_chunk(data: bytes) -> bytes:
     return text.replace(old, new, 1).encode("utf-8")
 
 
+def patch_hang_work_chunk(data: bytes) -> bytes:
+    """«ты завис» is unfinished work, not a chat stop."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_HANG_WORK" in text:
+        return data
+    old_o = (
+        "let o=/(продолж|доделай|ещё раз|попробуй ещё|не останавливайся|не останавлиайся|"
+        "не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|"
+        "finish (it|this)|keep going|continue\\b)/i;"
+    )
+    new_o = (
+        "let o=/(продолж|доделай|ещё раз|попробуй ещё|не останавливайся|не останавлиайся|"
+        "не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|"
+        "finish (it|this)|keep going|continue\\b|завис|зависа|опять встал|не процес|"
+        "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again)/i;/*FEDOR_HANG_WORK*/"
+    )
+    if old_o in text:
+        text = text.replace(old_o, new_o, 1)
+    old_m = (
+        "function m(a){return/(напишите|пришлите|вставьте|посмотрите|скиньте|"
+        "дайте (мне )?(токен|скрин)|что (там )?видно|что дальше\\?|жду вас|ваша очередь)/i"
+        ".test(String(a||\"\"))}"
+    )
+    new_m = (
+        "function m(a){return/(напишите|пришлите|вставьте|посмотрите|скиньте|"
+        "дайте (мне )?(токен|скрин)|что (там )?видно|что дальше\\?|жду вас|ваша очередь|"
+        "скажи чини|(?:^|\\n)\\s*жду\\s*[.!?]?\\s*$)/i.test(String(a||\"\"))}"
+    )
+    if old_m in text:
+        text = text.replace(old_m, new_m, 1)
+    return text.encode("utf-8")
+
+
 def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
     norm = rel.replace("\\", "/")
+    if norm.endswith("server/chunks/185.js"):
+        data = patch_hang_work_chunk(data)
     if norm.endswith("server/chunks/690.js"):
         data = patch_keep_going_chunk(data)
         data = patch_guard_cycle_chunk(data)
