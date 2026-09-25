@@ -35,9 +35,9 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useTheme } from "next-themes";
 
 import { IS_FREE_EDITION } from "@/lib/brand";
+import { applyTheme, loadTheme, type FedorTheme } from "@/lib/theme";
 import { PaySettings } from "@/components/pay-settings";
 import { openPayPage, shouldOpenPay, type PayGatePayload } from "@/lib/pay-gate";
 import { eulaTitle } from "@/lib/eula";
@@ -737,7 +737,10 @@ function BrainTrust({ steps, live }: { steps?: CrewStep[]; live: boolean }) {
 }
 
 export function CoderApp() {
-  const { theme, setTheme } = useTheme();
+  const [theme, setThemeState] = useState<FedorTheme>("dark");
+  const setTheme = (next: FedorTheme) => {
+    setThemeState(applyTheme(next));
+  };
   const [files, setFiles] = useState<FileMap>({});
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
@@ -972,6 +975,10 @@ export function CoderApp() {
     }
     return payload.token || "";
   }, [accountEmail, hostname, platform]);
+
+  useEffect(() => {
+    setThemeState(applyTheme(loadTheme()));
+  }, []);
 
   useEffect(() => {
     void refreshWorkspace("src/median.ts").catch((error: Error) => {

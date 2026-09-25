@@ -41,7 +41,15 @@ import {
   type PlanId,
 } from "./plans";
 import { readLocalCopy, writeLocalSpend } from "./copy-local";
-import { answerLocalAsks, readTokenReplies, writeTokenAsks } from "./token-sync";
+import {
+  answerLocalAsks,
+  clearReplies,
+  findLocalUser,
+  pendingAskIds,
+  readTokenReplies,
+  reportMatchesUser,
+  writeTokenAsks,
+} from "./token-sync";
 import type { HubInvoice, HubState, HubUser, PayProvider, QuotaView, TokenReport, UserSort } from "./types";
 import { createYookassaPayment, yoomoneyQuickpayUrl } from "./yoomoney";
 
@@ -348,9 +356,10 @@ export function spentTokens(user: {
   usedInWeek?: number;
   usedInFreeWindow?: number;
 }): number {
-  const life = Number(user.lifetimeTokens || 0);
-  const windows = Number(user.usedInWeek || 0) + Number(user.usedInFreeWindow || 0);
-  return Math.max(0, life, windows);
+  const life = Math.max(0, Number(user.lifetimeTokens || 0));
+  if (life > 0) return life;
+  const windows = Math.max(0, Number(user.usedInWeek || 0)) + Math.max(0, Number(user.usedInFreeWindow || 0));
+  return windows;
 }
 
 export function publicUser(user: HubUser) {
@@ -396,11 +405,14 @@ export function applyTokenReport(report: TokenReport | {
   lastSeenAt?: number;
 }): HubUser | null {
   return withLock((state) => {
-    let user = state.users.find(
-      (item) =>
-        (report.userId && item.id === report.userId) ||
-        (report.email && item.email === normalizeEmail(String(report.email))) ||
-        (report.deviceLabel && item.deviceLabel && item.deviceLabel === report.deviceLabel),
+    let user = state.users.find((item) =>
+      reportMatchesUser(
+        {
+          userId: report.userId,
+          email: report.email ? normalizeEmail(String(report.email)) : undefined,
+        },
+        item,
+      ),
     );
     if (!user) {
       const email = report.email ? normalizeEmail(String(report.email)) : "";
@@ -767,18 +779,22 @@ export function listUsers(adminKey: string, sortBy: UserSort = "name") {
   };
 }
 
-/** Hub button «Проверить токены»: ask every copy, take local reply now, show spend. */
+const WINDOW_CAP = PLANS[0].freeWindowTokens || 20_000;
+
+function looksLikeClonedWindowCap(users: { lifetimeTokens?: number }[]): boolean {
+  if (users.length < 2) return false;
+  return users.every((user) => spentTokens(user) === WINDOW_CAP);
+}
+
+/** Hub button «Проверить токены»: ask every copy, take only that copy's reply. */
 export function checkTokens(adminKey: string, sortBy: UserSort = "tokens") {
   assertAdmin(adminKey);
+  const askedAt = Date.now();
+  clearReplies();
   const users = peekUsers();
   const asked = writeTokenAsks(users.map((user) => user.id));
   const copy = readLocalCopy();
-  const local = users.find(
-    (user) =>
-      (copy?.userId && user.id === copy.userId) ||
-      (copy?.email && user.email === copy.email) ||
-      (copy?.deviceLabel && user.deviceLabel === copy.deviceLabel),
-  );
+  const local = findLocalUser(users, copy);
   if (local) {
     try {
       answerLocalAsks({
@@ -792,13 +808,53 @@ export function checkTokens(adminKey: string, sortBy: UserSort = "tokens") {
       // local miss is fine
     }
   }
-  const replies = readTokenReplies();
+  const replies = readTokenReplies(askedAt - 1000);
+  const repliedIds = new Set<string>();
   let received = 0;
   for (const reply of replies) {
-    if (applyTokenReport(reply)) received += 1;
+    const updated = applyTokenReport(reply);
+    if (updated) {
+      received += 1;
+      if (updated.id) repliedIds.add(updated.id);
+    }
+  }
+  if (looksLikeClonedWindowCap(peekUsers())) {
+    withLock((state) => {
+      for (const user of state.users) {
+        if (!repliedIds.has(user.id)) {
+          user.lifetimeTokens = 0;
+        }
+      }
+    });
   }
   const view = listUsers(adminKey, sortBy);
   return { ...view, asked, received };
+}
+
+/** Copy answers a hub ask for this user only, when the inbox has one. */
+export function answerPendingHubAsks(): number {
+  const copy = readLocalCopy();
+  const users = peekUsers();
+  const me = findLocalUser(users, copy);
+  const pending = pendingAskIds();
+  if (!pending.length) return 0;
+  if (me && pending.includes(me.id)) {
+    return answerLocalAsks({
+      userId: me.id,
+      email: me.email,
+      lifetimeTokens: me.lifetimeTokens || 0,
+      usedInWeek: me.usedInWeek,
+      usedInFreeWindow: me.usedInFreeWindow,
+    });
+  }
+  if (copy?.userId && pending.includes(copy.userId)) {
+    return answerLocalAsks({
+      userId: copy.userId,
+      email: copy.email,
+      lifetimeTokens: copy.lifetimeTokens || 0,
+    });
+  }
+  return 0;
 }
 
 function assertAdmin(adminKey: string): void {

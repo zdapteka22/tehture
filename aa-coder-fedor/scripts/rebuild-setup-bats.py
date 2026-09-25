@@ -119,6 +119,14 @@ INJECT = {
     "lib/crew/graph.ts": ROOT / "lib" / "crew" / "graph.ts",
     "lib/commerce/store.ts": ROOT / "lib" / "commerce" / "store.ts",
     "lib/commerce/token-sync.ts": ROOT / "lib" / "commerce" / "token-sync.ts",
+    "lib/commerce/hub-dir.ts": ROOT / "lib" / "commerce" / "hub-dir.ts",
+    "lib/theme.ts": ROOT / "lib" / "theme.ts",
+    "app/layout.tsx": ROOT / "app" / "layout.tsx",
+    "app/globals.css": ROOT / "app" / "globals.css",
+    "app/hub/page.tsx": ROOT / "app" / "hub" / "page.tsx",
+    "public/fedor-theme.css": ROOT / "public" / "fedor-theme.css",
+    "components/theme-provider.tsx": ROOT / "components" / "theme-provider.tsx",
+    "instrumentation.ts": ROOT / "instrumentation.ts",
     "app/api/hub/route.ts": ROOT / "app" / "api" / "hub" / "route.ts",
     "app/api/chat/route.ts": ROOT / "app" / "api" / "chat" / "route.ts",
     "lib/heavy-file.ts": ROOT / "lib" / "heavy-file.ts",
@@ -494,6 +502,83 @@ def patch_ui_copy(data: bytes, sku: str = "paid") -> bytes:
     return text.encode("utf-8") if changed else data
 
 
+def patch_token_broadcast_chunk(data: bytes) -> bytes:
+    """One PC must not write the same spend (often the 20000 window) onto every user."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    repls = [
+        (
+            "e=c.filter(c=>!a.userId||c===a.userId||c===b.deviceId),h=e.length?e:a.userId?[a.userId]:c",
+            "e=c.filter(c=>c===(a.userId||b.userId)||c===b.deviceId),h=e",
+        ),
+        (
+            "l=r.filter(t=>!e.userId||t===e.userId||t===i.deviceId),o=l.length?l:e.userId?[e.userId]:r",
+            "l=r.filter(t=>t===(e.userId||i.userId)||t===i.deviceId),o=l",
+        ),
+        (
+            "a.userId&&b.id===a.userId||a.email&&b.email===A(String(a.email))||a.deviceLabel&&b.deviceLabel&&b.deviceLabel===a.deviceLabel",
+            "a.userId&&b.id===a.userId||a.email&&b.email===A(String(a.email))",
+        ),
+        (
+            "g?.userId&&a.id===g.userId||g?.email&&a.email===g.email||g?.deviceLabel&&a.deviceLabel===g.deviceLabel",
+            "g?.userId&&a.id===g.userId||g?.email&&a.email===g.email",
+        ),
+        (
+            "function I(a){return Math.max(0,Number(a.lifetimeTokens||0),Number(a.usedInWeek||0)+Number(a.usedInFreeWindow||0))}",
+            "function I(a){let b=Math.max(0,Number(a.lifetimeTokens||0));return b>0?b:Math.max(0,Number(a.usedInWeek||0))+Math.max(0,Number(a.usedInFreeWindow||0))}",
+        ),
+    ]
+    changed = False
+    for old, new in repls:
+        if old in text:
+            text = text.replace(old, new)
+            changed = True
+    return text.encode("utf-8") if changed else data
+
+
+def patch_hub_dir_chunk(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "Fedor2" in text and "win32" in text and ".fedor-hub" in text:
+        return data
+    old = 'n.default.join(i.default.homedir(),".fedor-hub")'
+    if old not in text:
+        old = 'n.default.join(i.default.homedir(),".fedor-hub")'
+    if 'homedir(),".fedor-hub")' not in text and "homedir(),'.fedor-hub')" not in text:
+        return data
+    new = (
+        '(function(){var e=process.env.FEDOR_HUB_DIR&&process.env.FEDOR_HUB_DIR.trim();'
+        'if(e)return n.default.resolve(e);'
+        'if("win32"===process.platform){var a=process.env.LOCALAPPDATA||n.default.join(i.default.homedir(),"AppData","Local");'
+        'return n.default.join(a,"Fedor2","hub")}'
+        'return n.default.join(i.default.homedir(),".fedor-hub")})()'
+    )
+    text = text.replace('n.default.join(i.default.homedir(),".fedor-hub")', new)
+    text = text.replace("n.default.join(i.default.homedir(),'.fedor-hub')", new)
+    return text.encode("utf-8")
+
+
+def patch_ask_poll_chunk(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_ASK_POLL" in text:
+        return data
+    old = "s(),setInterval(s,36e5)"
+    if old not in text:
+        return data
+    new = (
+        "s(),setInterval(s,36e5);/*FEDOR_ASK_POLL*/"
+        "setInterval(function(){try{s()}catch(z){}},3e3)"
+    )
+    return text.replace(old, new, 1).encode("utf-8")
+
+
 def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/690.js"):
@@ -509,6 +594,10 @@ def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
         data = patch_ui_copy(data, sku)
     if "pay/page" in norm and norm.endswith(".js"):
         data = patch_ui_copy(data, sku)
+    if norm.endswith(".js"):
+        data = patch_hub_dir_chunk(data)
+        data = patch_ask_poll_chunk(data)
+        data = patch_token_broadcast_chunk(data)
     return data
 
 

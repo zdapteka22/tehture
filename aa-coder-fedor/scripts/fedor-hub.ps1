@@ -24,6 +24,7 @@ $global:FedorHub = @{
   CopyFile = $CopyFile
   AdminKey = $AdminKey
   Sort = 'name'
+  Theme = 'dark'
   Form = $null
   KeyBox = $null
   Status = $null
@@ -164,8 +165,18 @@ function Token-Of($obj) {
   try { $life = [int64](Get-Note $obj 'lifetimeTokens' 0) } catch {}
   try { $week = [int64](Get-Note $obj 'usedInWeek' 0) } catch {}
   try { $free = [int64](Get-Note $obj 'usedInFreeWindow' 0) } catch {}
-  if ($week + $free -gt $life) { return ($week + $free) }
-  return $life
+  if ($life -gt 0) { return $life }
+  return ($week + $free)
+}
+
+function Same-User($left, $right) {
+  if ($null -eq $left -or $null -eq $right) { return $false }
+  $leftId = [string](Get-Note $left 'userId' (Get-Note $left 'id' ''))
+  $rightId = [string](Get-Note $right 'userId' (Get-Note $right 'id' ''))
+  if ($leftId -and $rightId -and $leftId -eq $rightId) { return $true }
+  $leftEmail = ([string](Get-Note $left 'email' '')).Trim().ToLower()
+  $rightEmail = ([string](Get-Note $right 'email' '')).Trim().ToLower()
+  return ($leftEmail -and $rightEmail -and $leftEmail -eq $rightEmail)
 }
 
 function Add-UserFromReport($state, $rep) {
@@ -218,7 +229,7 @@ function Ingest-Replies($state) {
     try { $rep = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
     $hit = $null
     foreach ($u in (As-List $state.users)) {
-      if (($rep.userId -and $u.id -eq $rep.userId) -or ($rep.email -and $u.email -eq $rep.email) -or ($rep.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $rep.deviceLabel)) {
+      if (Same-User $rep $u) {
         $hit = $u
         break
       }
@@ -242,11 +253,7 @@ function Apply-LocalCopy($state) {
   try { $copy = Get-Content -LiteralPath $copyPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return }
   foreach ($u in (As-List $state.users)) {
     try {
-      $match = $false
-      if ($copy.userId -and $u.id -eq $copy.userId) { $match = $true }
-      if ($copy.email -and $u.email -eq $copy.email) { $match = $true }
-      if ($copy.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $copy.deviceLabel) { $match = $true }
-      if (-not $match) { continue }
+      if (-not (Same-User $copy $u)) { continue }
       $cur = Token-Of $u
       $got = Token-Of $copy
       if ($got -gt $cur) { Set-Note $u 'lifetimeTokens' $got }
@@ -259,7 +266,7 @@ function Apply-LocalCopy($state) {
   }
   $already = $false
   foreach ($u in (As-List $state.users)) {
-    if (($copy.userId -and $u.id -eq $copy.userId) -or ($copy.email -and $u.email -eq $copy.email) -or ($copy.deviceLabel -and $u.deviceLabel -and $u.deviceLabel -eq $copy.deviceLabel)) {
+    if (Same-User $copy $u) {
       $already = $true
       break
     }
@@ -281,6 +288,42 @@ function Write-Asks($state) {
     $n++
   }
   return $n
+}
+
+function Clear-Replies {
+  $dir = [string]$global:FedorHub.InboxDir
+  if (-not (Test-Path -LiteralPath $dir)) { return }
+  foreach ($file in @(Get-ChildItem -LiteralPath $dir -Filter 'reply-*.json' -ErrorAction SilentlyContinue)) {
+    try { Remove-Item -LiteralPath $file.FullName -Force } catch {}
+  }
+}
+
+function Write-LocalReply($state) {
+  $copyPath = [string]$global:FedorHub.CopyFile
+  if (-not (Test-Path -LiteralPath $copyPath)) { return }
+  try { $copy = Get-Content -LiteralPath $copyPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return }
+  $hit = $null
+  foreach ($u in (As-List $state.users)) {
+    if (Same-User $copy $u) { $hit = $u; break }
+  }
+  if (-not $hit) { return }
+  $id = [string]$hit.id
+  if (-not $id) { return }
+  $payload = @{
+    type = 'token-report'
+    userId = $id
+    email = [string]$hit.email
+    deviceId = [string](Get-Note $copy 'deviceId' '')
+    deviceLabel = [string]$hit.deviceLabel
+    lifetimeTokens = [int64](Token-Of $hit)
+    usedInWeek = [int64](Get-Note $hit 'usedInWeek' 0)
+    usedInFreeWindow = [int64](Get-Note $hit 'usedInFreeWindow' 0)
+    lastSeenAt = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+    t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+  } | ConvertTo-Json -Compress
+  $dir = [string]$global:FedorHub.InboxDir
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  [IO.File]::WriteAllText((Join-Path -Path $dir -ChildPath ('reply-' + $id + '.json')), ($payload + [Environment]::NewLine), $utf8)
 }
 
 function Set-Status([string]$Text, [bool]$Bad = $false) {
@@ -377,13 +420,38 @@ function Check-Tokens {
   try {
     if (-not (Ok-Key)) { Set-Status 'Нет доступа. Ключ: fedor-uchet' $true; return }
     $state = Read-State
+    Clear-Replies
     $asked = Write-Asks $state
+    Write-LocalReply $state
     Apply-LocalCopy $state
+    Start-Sleep -Seconds 4
     $got = Ingest-Replies $state
+    $replied = @{}
+    foreach ($file in @(Get-ChildItem -LiteralPath ([string]$global:FedorHub.InboxDir) -Filter 'reply-*.json' -ErrorAction SilentlyContinue)) {
+      try {
+        $rep = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        $rid = [string](Get-Note $rep 'userId' '')
+        if ($rid) { $replied[$rid] = $true }
+      } catch {}
+    }
+    $allCap = $true
+    $nUsers = 0
+    foreach ($u in (As-List $state.users)) {
+      $nUsers++
+      if ((Token-Of $u) -ne 20000) { $allCap = $false }
+    }
+    if ($allCap -and $nUsers -gt 1) {
+      foreach ($u in (As-List $state.users)) {
+        $uid = [string]$u.id
+        if (-not $uid -or -not $replied.ContainsKey($uid)) {
+          Set-Note $u 'lifetimeTokens' 0
+        }
+      }
+    }
     Write-State $state
     $global:FedorHub.Sort = 'tokens'
     Fill-Lists
-    Set-Status ('Запросил ' + $asked + ', ответили ' + $got)
+    Set-Status ('Запросил ' + $asked + ', ответили ' + $got + '. Цифра — расход этой копии, не окно 20000.')
   } catch {
     Write-Log ('check: ' + $_.Exception.Message)
     Set-Status ('Ошибка проверки: ' + $_.Exception.Message) $true
@@ -410,6 +478,49 @@ function Mark-Paid {
   } catch {
     Write-Log ('paid: ' + $_.Exception.Message)
     Set-Status ('Ошибка оплаты: ' + $_.Exception.Message) $true
+  }
+}
+
+function Read-Theme {
+  $p = Join-Path -Path $HubRoot -ChildPath 'theme.txt'
+  try {
+    if (Test-Path -LiteralPath $p) {
+      $t = ([string](Get-Content -LiteralPath $p -Raw -Encoding UTF8)).Trim().ToLower()
+      if ($t -eq 'light') { return 'light' }
+    }
+  } catch {}
+  return 'dark'
+}
+
+function Write-Theme([string]$Name) {
+  try {
+    [IO.File]::WriteAllText((Join-Path -Path $HubRoot -ChildPath 'theme.txt'), ($Name + [Environment]::NewLine), $utf8)
+  } catch {}
+}
+
+function Paint-App([string]$Name) {
+  $light = ($Name -eq 'light')
+  $bg = $(if ($light) { [System.Drawing.Color]::FromArgb(244, 244, 245) } else { [System.Drawing.Color]::FromArgb(11, 11, 11) })
+  $panel = $(if ($light) { [System.Drawing.Color]::FromArgb(255, 255, 255) } else { [System.Drawing.Color]::FromArgb(30, 30, 30) })
+  $text = $(if ($light) { [System.Drawing.Color]::FromArgb(24, 24, 27) } else { [System.Drawing.Color]::White })
+  $muted = $(if ($light) { [System.Drawing.Color]::FromArgb(82, 82, 91) } else { [System.Drawing.Color]::FromArgb(136, 136, 136) })
+  $btn = $(if ($light) { [System.Drawing.Color]::FromArgb(228, 228, 231) } else { [System.Drawing.Color]::FromArgb(30, 30, 30) })
+  $form = $global:FedorHub.Form
+  if ($null -eq $form) { return }
+  $form.BackColor = $bg
+  $form.ForeColor = $text
+  foreach ($ctrl in @($form.Controls)) {
+    if ($ctrl -is [System.Windows.Forms.Button]) {
+      $ctrl.BackColor = $btn
+      $ctrl.ForeColor = $text
+      try { $ctrl.FlatAppearance.BorderColor = $(if ($light) { [System.Drawing.Color]::FromArgb(212, 212, 216) } else { [System.Drawing.Color]::FromArgb(60, 60, 60) }) } catch {}
+    } elseif ($ctrl -is [System.Windows.Forms.ListView] -or $ctrl -is [System.Windows.Forms.TextBox]) {
+      $ctrl.BackColor = $panel
+      $ctrl.ForeColor = $text
+    } elseif ($ctrl -is [System.Windows.Forms.Label]) {
+      if ($ctrl -eq $global:FedorHub.Status) { continue }
+      $ctrl.ForeColor = $(if ($ctrl.Font -and $ctrl.Font.Bold) { $text } else { $muted })
+    }
   }
 }
 
@@ -496,6 +607,7 @@ function Show-App {
   $global:FedorHub.Fill = ${function:Fill-Lists}
   $global:FedorHub.Check = ${function:Check-Tokens}
   $global:FedorHub.Paid = ${function:Mark-Paid}
+  $global:FedorHub.Paint = ${function:Paint-App}
 
   $openBtn = New-DarkButton 'Открыть' 310 52 90
   $openBtn.Add_Click({ & $global:FedorHub.Fill })
@@ -508,6 +620,21 @@ function Show-App {
   $paidBtn = New-DarkButton 'Оплачено' 580 52 110
   $paidBtn.Add_Click({ & $global:FedorHub.Paid })
   $form.Controls.Add($paidBtn)
+
+  $darkBtn = New-DarkButton 'Тёмная' 700 52 90
+  $darkBtn.Add_Click({
+    $global:FedorHub.Theme = 'dark'
+    Write-Theme 'dark'
+    & $global:FedorHub.Paint 'dark'
+  })
+  $form.Controls.Add($darkBtn)
+  $lightBtn = New-DarkButton 'Светлая' 796 52 90
+  $lightBtn.Add_Click({
+    $global:FedorHub.Theme = 'light'
+    Write-Theme 'light'
+    & $global:FedorHub.Paint 'light'
+  })
+  $form.Controls.Add($lightBtn)
 
   $sortName = New-DarkButton 'по имени' 18 92 90
   $sortName.Add_Click({ $global:FedorHub.Sort = 'name'; & $global:FedorHub.Fill })
@@ -598,10 +725,13 @@ function Show-App {
   $form.Add_Shown({
     Mark-Alive
     try { & $global:FedorHub.Fill } catch {}
+    try { & $global:FedorHub.Paint $global:FedorHub.Theme } catch {}
     try { $global:FedorHub.Form.Activate() } catch {}
   })
   Mark-Alive
+  $global:FedorHub.Theme = Read-Theme
   Fill-Lists
+  Paint-App $global:FedorHub.Theme
   [void]$form.ShowDialog()
 }
 

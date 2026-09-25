@@ -20,6 +20,8 @@ const SHIP = [
   "test:local-llm",
   "test:router",
   "test:paid",
+  "test:tokens",
+  "test:theme",
   "test:commerce",
   "test:pay",
   "test:sale",

@@ -138,8 +138,8 @@ export default function HubPage() {
       <div className="mx-auto max-w-4xl space-y-4">
         <h1 className="text-xl text-white">{APP_TITLE} · хаб учёта</h1>
         <p className="text-sm text-zinc-500">
-          «Проверить токены» шлёт запрос каждой копии кодера и показывает, сколько токенов истрачено сейчас.
-          Раз в сутки копия сама присылает те же цифры.
+          «Проверить токены» спрашивает каждую копию отдельно и пишет только её расход.
+          20 000 — это окно пробного тарифа, не общая цифра на всех.
         </p>
         <div className="flex flex-wrap gap-2">
           <Input
@@ -175,7 +175,7 @@ export default function HubPage() {
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="text-white">{user.name || user.email}</div>
                 <div className="text-[12px] text-amber-200">
-                  истрачено {(user.lifetimeTokens || 0).toLocaleString("ru-RU")} ток.
+                  истрачено {(Number(user.lifetimeTokens || 0) || 0).toLocaleString("ru-RU")} ток.
                 </div>
               </div>
               <div className="text-[12px] text-zinc-500">{user.email}</div>

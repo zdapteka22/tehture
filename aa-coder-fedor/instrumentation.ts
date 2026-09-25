@@ -2,9 +2,9 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { installErrorLog } = await import("./lib/error-log");
     installErrorLog();
-    const { peekUsers } = await import("./lib/commerce/store");
+    const { peekUsers, answerPendingHubAsks } = await import("./lib/commerce/store");
     const { flushDailyIfDue } = await import("./lib/commerce/token-sync");
-    const tick = () => {
+    const tickDaily = () => {
       try {
         for (const user of peekUsers()) {
           flushDailyIfDue({
@@ -20,7 +20,16 @@ export async function register() {
         // daily report must not crash the process
       }
     };
-    tick();
-    setInterval(tick, 60 * 60 * 1000);
+    const tickAsks = () => {
+      try {
+        answerPendingHubAsks();
+      } catch {
+        // ask poll must not crash the process
+      }
+    };
+    tickDaily();
+    tickAsks();
+    setInterval(tickDaily, 60 * 60 * 1000);
+    setInterval(tickAsks, 3000);
   }
 }

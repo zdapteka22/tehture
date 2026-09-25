@@ -498,6 +498,64 @@ function showFatal(message) {
   }
 }
 
+const FEDOR_LIGHT_CSS =
+  "html.light,html.light body{color-scheme:light;background:#f4f4f5!important;color:#18181b!important}" +
+  "html.light .bg-\\[\\#07070a\\],html.light .bg-\\[\\#0b0b0b\\],html.light .bg-\\[\\#101010\\]," +
+  "html.light .bg-\\[\\#14141c\\],html.light .bg-\\[\\#151a24\\],html.light .bg-\\[\\#161616\\]," +
+  "html.light .bg-\\[\\#181818\\],html.light .bg-\\[\\#1a1a1a\\],html.light .bg-\\[\\#1a1a22\\]," +
+  "html.light .bg-\\[\\#1a1524\\],html.light .bg-\\[\\#1c1c1c\\],html.light .bg-\\[\\#1e1e1e\\]," +
+  "html.light .bg-\\[\\#252526\\],html.light .bg-\\[\\#252532\\],html.light .bg-\\[\\#2a2d2e\\]," +
+  "html.light .bg-\\[\\#2a2d3a\\],html.light .bg-\\[\\#37373d\\],html.light .bg-\\[\\#3a2f1a\\]" +
+  "{background-color:#f4f4f5!important}" +
+  "html.light .text-white,html.light .text-\\[\\#cccccc\\],html.light .text-\\[\\#e8e8e8\\]," +
+  "html.light .text-\\[\\#e8e8f0\\],html.light .text-\\[\\#d8d8ea\\],html.light .text-\\[\\#d0d0e0\\]" +
+  "{color:#18181b!important}" +
+  "html.light .text-\\[\\#9d9d9d\\],html.light .text-zinc-500,html.light .text-zinc-600{color:#52525b!important}" +
+  "html.light .border-\\[\\#3c3c3c\\],html.light .border-white\\/10,html.light .border-white\\/15{border-color:#d4d4d8!important}";
+
+function wireFedorTheme(win) {
+  if (!win || !win.webContents) return;
+  const apply = async () => {
+    try {
+      await win.webContents.insertCSS(FEDOR_LIGHT_CSS);
+      await win.webContents.executeJavaScript(`(() => {
+        const KEY = "fedor-theme";
+        const apply = (t) => {
+          const light = t === "light";
+          document.documentElement.classList.toggle("light", light);
+          document.documentElement.classList.toggle("dark", !light);
+          document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
+          if (document.body) {
+            document.body.classList.toggle("light", light);
+            document.body.classList.toggle("dark", !light);
+          }
+          try { localStorage.setItem(KEY, light ? "light" : "dark"); } catch (e) {}
+        };
+        apply(localStorage.getItem(KEY) || localStorage.getItem("theme") || "dark");
+        window.__fedorSetTheme = apply;
+        if (!window.__fedorThemeClicks) {
+          window.__fedorThemeClicks = true;
+          document.addEventListener("click", (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest("button") : null;
+            if (!btn) return;
+            const text = String(btn.textContent || "").trim();
+            if (text === "Светлая") apply("light");
+            if (text === "Тёмная") apply("dark");
+          }, true);
+        }
+      })()`);
+    } catch {
+      // theme inject is optional
+    }
+  };
+  win.webContents.on("did-finish-load", () => {
+    void apply();
+  });
+  win.webContents.on("did-navigate", () => {
+    void apply();
+  });
+}
+
 function createWindow() {
   installEditMenu();
   mainWindow = new BrowserWindow({
@@ -543,6 +601,7 @@ function createWindow() {
     Menu.buildFromTemplate(template).popup({ window: mainWindow });
   });
   mainWindow.loadFile(SPLASH);
+  wireFedorTheme(mainWindow);
   mainWindow.once("ready-to-show", () => mainWindow && mainWindow.show());
   mainWindow.on("closed", () => {
     mainWindow = null;

@@ -60,6 +60,7 @@
     "test:colleague": "npx tsx scripts/test-colleague.ts",
     "test:commerce": "npx tsx scripts/test-commerce.ts",
     "test:tokens": "npx tsx scripts/test-token-sync.ts",
+    "test:theme": "npx tsx scripts/test-theme.ts",
     "test:pay": "npx tsx scripts/test-pay.ts",
     "test:sale": "npx tsx scripts/test-sale-ready.ts",
     "test:electron": "npx tsx scripts/test-electron-boot.ts",

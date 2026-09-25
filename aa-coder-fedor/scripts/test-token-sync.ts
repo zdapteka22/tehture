@@ -8,8 +8,17 @@ async function main() {
   process.env.FEDOR_HUB_ADMIN_KEY = "test-admin";
 
   const { writeLocalSpend, readLocalCopy } = await import("../lib/commerce/copy-local");
-  const { dailyDue, DAY_MS, writeTokenAsks, pendingAskIds, answerLocalAsks, readTokenReplies } =
-    await import("../lib/commerce/token-sync");
+  const {
+    dailyDue,
+    DAY_MS,
+    writeTokenAsks,
+    pendingAskIds,
+    answerLocalAsks,
+    readTokenReplies,
+    reportMatchesUser,
+    ownAskIds,
+    clearReplies,
+  } = await import("../lib/commerce/token-sync");
   const {
     registerUser,
     consumeChatTurn,
@@ -96,6 +105,54 @@ async function main() {
     ok("сутки ещё не прошли", dailyDue(Date.now() - 1000) === false);
     ok("сутки прошли", dailyDue(Date.now() - DAY_MS - 1) === true);
     ok("первый отчёт пора", dailyDue(undefined) === true);
+
+    ok(
+      "совпадение только по id/почте",
+      reportMatchesUser({ userId: anna.id }, { id: anna.id, email: anna.email }) &&
+        !reportMatchesUser({ userId: "other" }, { id: anna.id, email: anna.email }),
+    );
+    ok(
+      "ask чужого id не свой",
+      ownAskIds([anna.id, boris.id], { userId: anna.id }).join(",") === anna.id,
+    );
+
+    clearReplies();
+    writeTokenAsks([anna.id, boris.id]);
+    const leaked = answerLocalAsks({ lifetimeTokens: 20000, usedInFreeWindow: 20000 });
+    const leakReplies = readTokenReplies();
+    ok("без userId не отвечаем всем", leaked <= 1 && leakReplies.every((r) => r.userId !== boris.id));
+    ok("Борису не записали 20000", !leakReplies.some((r) => r.userId === boris.id && r.lifetimeTokens === 20000));
+
+    applyTokenReport({
+      type: "token-report",
+      userId: anna.id,
+      email: anna.email,
+      deviceLabel: "ПК Бориса",
+      lifetimeTokens: 20000,
+      usedInFreeWindow: 20000,
+      lastSeenAt: Date.now(),
+      t: Date.now(),
+    });
+    const afterClone = listUsers("test-admin", "tokens");
+    const borisAfter = afterClone.users.find((u) => u.email === "boris@local.fedor");
+    ok("общая метка ПК не копирует 20000 соседу", (borisAfter?.lifetimeTokens || 0) === 9000);
+
+    const cara = registerUser({ email: "cara@local.fedor", name: "Кара", deviceLabel: "один ПК" });
+    const dima = registerUser({ email: "dima@local.fedor", name: "Дима", deviceLabel: "один ПК" });
+    applyTokenReport({
+      type: "token-report",
+      userId: cara.id,
+      email: cara.email,
+      deviceLabel: "один ПК",
+      lifetimeTokens: 20000,
+      usedInFreeWindow: 20000,
+      lastSeenAt: Date.now(),
+      t: Date.now(),
+    });
+    writeLocalSpend(20000, { userId: cara.id, email: cara.email });
+    const checkedClone = checkTokens("test-admin", "tokens");
+    const dimaRow = checkedClone.users.find((u) => u.email === "dima@local.fedor");
+    ok("проверка не ставит 20000 всем", (dimaRow?.lifetimeTokens || 0) !== 20000);
 
     console.log("token-sync ok");
   } finally {

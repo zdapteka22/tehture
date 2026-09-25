@@ -45,7 +45,7 @@ export function writeTokenReply(report: TokenReport): string {
   return file;
 }
 
-export function readTokenReplies(): TokenReport[] {
+export function readTokenReplies(afterTs?: number): TokenReport[] {
   const dir = inboxDir();
   let names: string[] = [];
   try {
@@ -57,12 +57,59 @@ export function readTokenReplies(): TokenReport[] {
   for (const name of names) {
     try {
       const parsed = JSON.parse(readFileSync(path.join(dir, name), "utf8")) as TokenReport;
-      if (typeof parsed.lifetimeTokens === "number") out.push(parsed);
+      if (typeof parsed.lifetimeTokens !== "number") continue;
+      if (typeof afterTs === "number" && Number(parsed.t || 0) < afterTs) continue;
+      out.push(parsed);
     } catch {
       // skip bad reply
     }
   }
   return out;
+}
+
+export function clearReplies(): void {
+  const dir = inboxDir();
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir).filter((name) => name.startsWith("reply-") && name.endsWith(".json"));
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    try {
+      unlinkSync(path.join(dir, name));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Spend from a report belongs to this user only by id or email — never by shared PC name. */
+export function reportMatchesUser(
+  report: { userId?: string; email?: string },
+  user: { id?: string; email?: string },
+): boolean {
+  if (report.userId && user.id && report.userId === user.id) return true;
+  const reportEmail = String(report.email || "").trim().toLowerCase();
+  const userEmail = String(user.email || "").trim().toLowerCase();
+  return Boolean(reportEmail && userEmail && reportEmail === userEmail);
+}
+
+export function findLocalUser<T extends { id?: string; email?: string }>(
+  users: T[],
+  copy: { userId?: string; email?: string } | null | undefined,
+): T | undefined {
+  if (!copy) return undefined;
+  return users.find((user) => reportMatchesUser({ userId: copy.userId, email: copy.email }, user));
+}
+
+export function ownAskIds(
+  asks: string[],
+  input: { userId?: string; deviceId?: string },
+): string[] {
+  const mine = [input.userId, input.deviceId].filter((id): id is string => Boolean(id));
+  if (!mine.length) return [];
+  return asks.filter((id) => mine.includes(id));
 }
 
 export function clearAsks(userIds?: string[]): void {
@@ -78,7 +125,32 @@ export function clearAsks(userIds?: string[]): void {
   }
 }
 
-/** This PC's coder answers a hub ask with current spend. */
+function writeOwnReply(
+  copy: ReturnType<typeof ensureLocalCopy>,
+  input: {
+    userId?: string;
+    email?: string;
+    lifetimeTokens: number;
+    usedInWeek?: number;
+    usedInFreeWindow?: number;
+  },
+  userId: string | undefined,
+): void {
+  writeTokenReply({
+    type: "token-report",
+    userId,
+    email: copy.email || input.email,
+    deviceId: copy.deviceId,
+    deviceLabel: copy.deviceLabel,
+    lifetimeTokens: Math.max(copy.lifetimeTokens, input.lifetimeTokens),
+    usedInWeek: input.usedInWeek,
+    usedInFreeWindow: input.usedInFreeWindow,
+    lastSeenAt: Date.now(),
+    t: Date.now(),
+  });
+}
+
+/** This PC answers only its own ask. Never copy one spend onto every user. */
 export function answerLocalAsks(input: {
   userId?: string;
   email?: string;
@@ -93,42 +165,20 @@ export function answerLocalAsks(input: {
     lastSeenAt: Date.now(),
   });
   const asks = pendingAskIds();
-  const mine = asks.filter((id) => !input.userId || id === input.userId || id === copy.deviceId);
-  const targets = mine.length ? mine : input.userId ? [input.userId] : asks;
-  if (!targets.length && !asks.length) {
-    writeTokenReply({
-      type: "token-report",
-      userId: copy.userId || input.userId,
-      email: copy.email || input.email,
-      deviceId: copy.deviceId,
-      deviceLabel: copy.deviceLabel,
-      lifetimeTokens: Math.max(copy.lifetimeTokens, input.lifetimeTokens),
-      usedInWeek: input.usedInWeek,
-      usedInFreeWindow: input.usedInFreeWindow,
-      lastSeenAt: Date.now(),
-      t: Date.now(),
-    });
+  const targets = ownAskIds(asks, { userId: input.userId || copy.userId, deviceId: copy.deviceId });
+  const selfId = input.userId || copy.userId;
+  if (!targets.length) {
+    if (!selfId && !input.email && !copy.email) return 0;
+    writeOwnReply(copy, input, selfId);
+    markLocalReported();
     return 1;
   }
-  let n = 0;
-  for (const id of targets.length ? targets : [copy.userId || copy.deviceId]) {
-    writeTokenReply({
-      type: "token-report",
-      userId: input.userId || id,
-      email: copy.email || input.email,
-      deviceId: copy.deviceId,
-      deviceLabel: copy.deviceLabel,
-      lifetimeTokens: Math.max(copy.lifetimeTokens, input.lifetimeTokens),
-      usedInWeek: input.usedInWeek,
-      usedInFreeWindow: input.usedInFreeWindow,
-      lastSeenAt: Date.now(),
-      t: Date.now(),
-    });
-    n += 1;
+  for (const id of targets) {
+    writeOwnReply(copy, input, id === copy.deviceId ? selfId || id : id);
   }
   clearAsks(targets);
   markLocalReported();
-  return n;
+  return targets.length;
 }
 
 export function dailyDue(lastTokenReportAt?: number, now = Date.now()): boolean {

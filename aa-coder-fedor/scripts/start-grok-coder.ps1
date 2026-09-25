@@ -1071,6 +1071,7 @@ try {
     'GROK_MODEL=deepseek-chat',
     'FAST_MODEL=deepseek-chat',
     'FEDOR_HUB_ADMIN_KEY=fedor-uchet',
+    ('FEDOR_HUB_DIR=' + (Join-Path -Path $LocalApp -ChildPath 'Fedor2\hub')),
     ('GROK_WORKSPACE=' + $workspace)
   )
   $needWrite = $true
@@ -1081,6 +1082,13 @@ try {
   if ($needWrite) {
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [IO.File]::WriteAllText($envLocal, (($baked -join [Environment]::NewLine) + [Environment]::NewLine), $utf8)
+  } elseif (Test-Path -LiteralPath $envLocal) {
+    $nowEnv = [IO.File]::ReadAllText($envLocal)
+    if ($nowEnv -notmatch 'FEDOR_HUB_DIR=') {
+      $utf8 = New-Object System.Text.UTF8Encoding $false
+      $hubLine = 'FEDOR_HUB_DIR=' + (Join-Path -Path $LocalApp -ChildPath 'Fedor2\hub')
+      [IO.File]::WriteAllText($envLocal, ($nowEnv.TrimEnd() + [Environment]::NewLine + $hubLine + [Environment]::NewLine), $utf8)
+    }
   }
   if ($bakedKey -and ($bakedKey -ne '__FEDOR_DEEPSEEK_KEY__')) {
     Set-EnvVar -Name 'DEEPSEEK_API_KEY' -Value $bakedKey
@@ -1148,6 +1156,12 @@ try {
   Set-EnvVar -Name 'FEDOR_SKU' -Value $skuNow
   Set-EnvVar -Name 'FEDOR_APP_ROOT' -Value $Root
   if ($skuNow -eq 'free') { Set-EnvVar -Name 'FEDOR_FREE' -Value '1' }
+  $hubDir = ''
+  $laHub = Get-EnvVar -Name 'LOCALAPPDATA'
+  if ($laHub) { $hubDir = Join-Path -Path $laHub -ChildPath 'Fedor2\hub' }
+  if (-not $hubDir) { $hubDir = Join-Path -Path $UserProfile -ChildPath 'AppData\Local\Fedor2\hub' }
+  Set-EnvVar -Name 'FEDOR_HUB_DIR' -Value $hubDir
+  Set-EnvVar -Name 'FEDOR_HUB_ADMIN_KEY' -Value 'fedor-uchet'
 
   Write-Host '[7/8] Visual C++ + Electron window...'
   if (-not $alreadyReady) {
