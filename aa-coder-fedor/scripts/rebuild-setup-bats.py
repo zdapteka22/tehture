@@ -131,6 +131,14 @@ INJECT = {
     "lib/tools.ts": ROOT / "lib" / "tools.ts",
     "lib/reflexion.ts": ROOT / "lib" / "reflexion.ts",
     "coder-v2/src/hub.cjs": ROOT / "coder-v2" / "src" / "hub.cjs",
+    "lib/commerce/plans.ts": ROOT / "lib" / "commerce" / "plans.ts",
+    "lib/commerce/pay-config.ts": ROOT / "lib" / "commerce" / "pay-config.ts",
+    "lib/commerce/store.ts": ROOT / "lib" / "commerce" / "store.ts",
+    "lib/commerce/verify-pay.ts": ROOT / "lib" / "commerce" / "verify-pay.ts",
+    "lib/pay-gate.ts": ROOT / "lib" / "pay-gate.ts",
+    "app/pay/page.tsx": ROOT / "app" / "pay" / "page.tsx",
+    "components/pay-app.tsx": ROOT / "components" / "pay-app.tsx",
+    "components/pay-settings.tsx": ROOT / "components" / "pay-settings.tsx",
     "coder-v2/src/agent/goal-brain.mjs": ROOT / "coder-v2" / "src" / "agent" / "goal-brain.mjs",
     "coder-v2/src/agent/loop-guard.mjs": ROOT / "coder-v2" / "src" / "agent" / "loop-guard.mjs",
     ".agent/goal-brain.mjs": REPO / ".agent" / "goal-brain.mjs",
@@ -365,6 +373,15 @@ def patch_ui_copy(data: bytes) -> bytes:
             "Оплата российской картой, СБП и криптовалютой. Реквизиты — в «Приём оплаты».",
         )
         text = text.replace("ЮMoney / ЮKassa и крипта.", "Российская карта, СБП и крипта.")
+        text = text.replace("Тариф Free", "Пробный")
+        text = text.replace("на Free — как у Grok", "на пробном тарифе")
+        text = text.replace("Тарифы как у Grok", "Тарифы Fedor 3.0")
+        text = text.replace("SuperGrok Lite", "Fedor Lite")
+        text = text.replace("SuperGrok Plus", "Fedor Plus")
+        text = text.replace("SuperGrok Heavy", "Fedor Heavy")
+        text = text.replace("SuperGrok", "Fedor")
+        text = text.replace('children:"ЮMoney"', 'children:"Карта"')
+        text = text.replace("Оплата: ЮMoney и крипта", "Оплата российской картой, СБП и криптой")
         if "Ход" not in text or "children:\"Ход\"" not in text:
             text = text.replace("FEDOR_NO_HOD_LABEL", "FEDOR_NO_HOD_LABEL")
             if "FEDOR_NO_HOD_LABEL" not in text:

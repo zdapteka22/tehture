@@ -541,13 +541,13 @@ function methodReady(method: PayMethod, asset: CryptoAsset | undefined, cfg: Pay
 function payNote(method: PayMethod, asset: CryptoAsset | undefined, cfg: PayConfig): string {
   if (method === "yoomoney") {
     if (hasYookassa(cfg) || hasYoomoneyWallet(cfg)) {
-      return "ЮMoney: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
+      return "Карта: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
     }
-    return "ЮMoney: настройки ещё не заданы. Вставьте их в Настройки → Приём оплаты.";
+    return "Карта: настройки ещё не заданы. Вставьте их в Настройки → Приём оплаты.";
   }
   if (method === "sbp") {
     if (hasYookassa(cfg) || hasYoomoneyWallet(cfg)) {
-      return "СБП через ЮMoney: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
+      return "СБП: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
     }
     const req = cfg.sbpRequisites || cfg.sbpPhone;
     if (req) return `СБП: ${req}. После перевода нажмите «Проверить оплату» или пришлите номер счёта.`;
@@ -597,7 +597,7 @@ async function attachProviderPayment(invoice: HubInvoice): Promise<HubInvoice> {
         inv.provider = "yookassa";
         inv.providerPaymentId = pay.id;
         inv.payUrl = pay.confirmationUrl;
-        inv.note = "ЮKassa: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
+        inv.note = "Карта / СБП: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
         return { ...inv };
       });
     } catch {
@@ -617,7 +617,7 @@ async function attachProviderPayment(invoice: HubInvoice): Promise<HubInvoice> {
       if (!inv) return invoice;
       inv.provider = "yoomoney";
       inv.payUrl = payUrl;
-      inv.note = "ЮMoney: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
+      inv.note = "Карта / СБП: откройте ссылку оплаты. После перевода нажмите «Проверить оплату».";
       return { ...inv };
     });
   }

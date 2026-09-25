@@ -2769,7 +2769,7 @@ export function CoderApp() {
             <div className="grid gap-2 rounded-lg border border-[#3c3c3c] bg-[#1e1e1e] p-3">
               <div className="flex items-center gap-2 text-sm text-[#e8e8e8]">
                 <ShieldCheck className="size-4 text-[#b48eff]" />
-                {IS_FREE_EDITION ? "Бесплатный Fedor 3.0" : account?.quota.planName || "Тариф Free"}
+                {IS_FREE_EDITION ? "Бесплатный Fedor 3.0" : account?.quota.planName || "Пробный"}
               </div>
               {IS_FREE_EDITION ? (
                 <p className="text-[11px] leading-5 text-zinc-500">
@@ -2780,7 +2780,7 @@ export function CoderApp() {
                   <p className="text-[11px] leading-5 text-zinc-400">
                     {account?.quota
                       ? `Осталось ${account.quota.tokensLeft.toLocaleString("ru-RU")} из ${account.quota.tokensCap.toLocaleString("ru-RU")} токенов. Окно: ${account.quota.windowKind === "free2h" ? "2 часа" : "неделя"}.`
-                      : "10 сообщений каждые 2 часа на Free — как у Grok."}
+                      : "10 сообщений каждые 2 часа на пробном тарифе."}
                   </p>
                   <p className="text-[11px] leading-5 text-zinc-500">
                     Оплата российской картой, СБП и криптовалютой. Реквизиты — в «Приём оплаты».

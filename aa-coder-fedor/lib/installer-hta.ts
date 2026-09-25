@@ -99,7 +99,7 @@ export function installerHtaHtml(): string {
     <div class="slide s"><div class="shade"></div><div class="rail"></div>
       <div class="brand">AA coder f&#1105;dor 3.0</div>
       <div class="ad"><div class="kicker">Оплата</div>
-        <h2>Оплата российской картой, СБП и криптой</h2><p>Платите российской картой, СБП или криптовалютой. Зарубежная карта не нужна. Тарифы как у Grok. Крипта USDT, BTC, TON. Кодер сам проверяет, что перевод пришёл.</p></div></div>
+        <h2>Оплата российской картой, СБП и криптой</h2><p>Платите российской картой, СБП или криптовалютой. Зарубежная карта не нужна. Тарифы Fedor Lite, Fedor, Plus и Heavy. Крипта USDT, BTC, TON. Кодер сам проверяет, что перевод пришёл.</p></div></div>
     <div class="slide r"><div class="shade"></div><div class="rail"></div>
       <div class="brand">AA coder f&#1105;dor 3.0</div>
       <div class="ad"><div class="kicker">Экипаж</div>
