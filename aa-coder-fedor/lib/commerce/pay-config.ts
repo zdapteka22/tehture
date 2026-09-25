@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import path from "node:path";
 
 import { ensureHubRoot, hubRoot } from "./hub-dir";
+import { looksLikeYookassaSecret } from "./yookassa-shop";
 
 export type PayConfig = {
   yookassaShopId: string;
@@ -138,6 +139,12 @@ export function savePayConfig(input: PayConfigInput, adminKey = ""): PayConfig {
   }
   const current = fromFile();
   const next: PayConfig = { ...current };
+  if (looksLikeYookassaSecret(trim(input.yoomoneyToken)) && !trim(input.yookassaSecret)) {
+    input = { ...input, yookassaSecret: trim(input.yoomoneyToken), yoomoneyToken: current.yoomoneyToken };
+  }
+  if (looksLikeYookassaSecret(trim(input.yoomoneySecret)) && !trim(input.yookassaSecret)) {
+    input = { ...input, yookassaSecret: trim(input.yoomoneySecret), yoomoneySecret: current.yoomoneySecret };
+  }
   (Object.keys(EMPTY) as (keyof PayConfig)[]).forEach((key) => {
     if (input[key] === undefined) return;
     const value = trim(input[key]);

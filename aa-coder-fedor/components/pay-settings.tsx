@@ -101,7 +101,20 @@ export function PaySettings() {
         Приём оплаты
       </div>
       <p className="text-[11px] leading-5 text-zinc-500">
-        Реквизиты для российской карты, СБП и крипты. Кодер проверяет платёж сам.
+        Реквизиты для российской карты, СБП и крипты. СБП идёт через ЮKassa: shopId + секрет live_…
+        Кабинет:{" "}
+        <a
+          className="text-sky-300 underline-offset-2 hover:underline"
+          href="https://yookassa.ru/my/shop-settings"
+          target="_blank"
+          rel="noreferrer"
+        >
+          yookassa.ru/my/shop-settings
+        </a>
+        . «Настройки» — меню, дальше Магазин / Интеграция. Включите СБП в способах оплаты.
+        Секрет live_… не кладите в токен ЮMoney. HTTP-уведомления на этот ПК не доходят — проверка по API.
+      </p>
+      <p className="text-[11px] leading-5 text-zinc-500">
         Выдуманных реквизитов нет. Секреты в исходники не пишутся.
       </p>
       {locked && (
@@ -110,7 +123,7 @@ export function PaySettings() {
         </p>
       )}
       <Input
-        placeholder="shopId приёма карт"
+        placeholder="shopId из shop-settings (цифры)"
         value={seller.yookassaShopId}
         onChange={(event) => setSeller({ ...seller, yookassaShopId: event.target.value })}
       />

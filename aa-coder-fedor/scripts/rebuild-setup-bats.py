@@ -133,6 +133,7 @@ INJECT = {
     "coder-v2/src/hub.cjs": ROOT / "coder-v2" / "src" / "hub.cjs",
     "lib/commerce/plans.ts": ROOT / "lib" / "commerce" / "plans.ts",
     "lib/commerce/pay-config.ts": ROOT / "lib" / "commerce" / "pay-config.ts",
+    "lib/commerce/yookassa-shop.ts": ROOT / "lib" / "commerce" / "yookassa-shop.ts",
     "lib/commerce/store.ts": ROOT / "lib" / "commerce" / "store.ts",
     "lib/commerce/verify-pay.ts": ROOT / "lib" / "commerce" / "verify-pay.ts",
     "lib/pay-gate.ts": ROOT / "lib" / "pay-gate.ts",

@@ -3,7 +3,10 @@ import path from "node:path";
 
 import { IS_FREE_EDITION, SETUP_BAT_NAME, isFreeEdition } from "../lib/brand";
 import { PLANS, planById } from "../lib/commerce/plans";
-import { payReadinessNote } from "../lib/commerce/pay-config";
+import { payReadinessNote, savePayConfig, getPayConfig, payConfigPath } from "../lib/commerce/pay-config";
+import { looksLikeYookassaSecret, shopSetupAdvice, YOOKASSA_SHOP_SETTINGS } from "../lib/commerce/yookassa-shop";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 
 function ok(name: string, cond: unknown) {
   if (!cond) {
@@ -36,8 +39,27 @@ ok("pay app no YuMoney label", !/>\s*ЮMoney\s*</.test(payApp) && !/children: \"
 ok("pay headline is Fedor", /Тарифы Fedor 3\.0/.test(payApp));
 
 const settings = readFileSync(path.join(root, "components/pay-settings.tsx"), "utf8");
-ok("settings pitch is card/SBP", /российской карты, СБП/.test(settings));
+ok("settings pitch is card/SBP", /российской карты/.test(settings) && /СБП/.test(settings));
 ok("settings no YuMoney pitch", !/ЮMoney \/ ЮKassa/.test(settings));
+ok("settings opens shop-settings", settings.includes(YOOKASSA_SHOP_SETTINGS));
+ok("live_ is yookassa secret", looksLikeYookassaSecret("live_FakeShopSecretForTestOnly0123456789"));
+ok("random token is not yookassa secret", !looksLikeYookassaSecret("oauth-history-token"));
+ok("shop advice has accordion", /аккордеон/.test(shopSetupAdvice()) && /Магазин/.test(shopSetupAdvice()));
+
+const hub = mkdtempSync(path.join(os.tmpdir(), "fedor-pay-"));
+const prevHub = process.env.FEDOR_HUB_DIR;
+process.env.FEDOR_HUB_DIR = hub;
+savePayConfig({
+  yookassaShopId: "123456",
+  yoomoneyToken: "live_FakeShopSecretForTestOnly0123456789",
+});
+const saved = getPayConfig();
+ok("live_ pasted as yumoney token becomes yookassa secret", saved.yookassaSecret.startsWith("live_") && saved.yoomoneyToken === "");
+ok("shopId kept", saved.yookassaShopId === "123456");
+if (prevHub === undefined) delete process.env.FEDOR_HUB_DIR;
+else process.env.FEDOR_HUB_DIR = prevHub;
+rmSync(hub, { recursive: true, force: true });
+void payConfigPath;
 
 const chrome = readFileSync(path.join(root, "components/coder-app.tsx"), "utf8");
 ok("chrome fallback is Пробный", /planName \|\| "Пробный"/.test(chrome));
