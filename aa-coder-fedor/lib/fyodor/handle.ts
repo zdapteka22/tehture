@@ -25,6 +25,7 @@ import { runLoopEngine, type CheckFn, type KillerFn, type ProduceFn } from "./lo
 import { appendDecisionMd, appendLoop, archiveAgent, loadSession, saveSession, type AgentSession } from "./memory";
 import { looksLikeFollowUp, normalizeTask } from "./normalizer";
 import { looksLikeOperate, looksLikeSimpleHostTask, looksLikeStopCommand } from "./intent";
+import { noteGuardUser } from "../loop-guard-hook";
 import { buildRoleMessages } from "./roles";
 import { GOAL_KEEP_GOING } from "./until-goal";
 import { throwIfAborted } from "../run-control";
@@ -223,6 +224,11 @@ async function handleFyodorInner(request: FyodorHandleRequest): Promise<FyodorHa
   if (ngp === "enabled") send?.("status", { text: "новая память включена" });
   if (ngp === "disabled") send?.("status", { text: "новая память выключена" });
   const jobId = request.jobId?.trim() || undefined;
+  try {
+    noteGuardUser(request.userText);
+  } catch {
+    // guard must never block a task
+  }
   if (looksLikeStopCommand(request.userText)) {
     send?.("text", { delta: "Остановлено. Жду следующую задачу." });
     send?.("status", { text: "Остановлено." });

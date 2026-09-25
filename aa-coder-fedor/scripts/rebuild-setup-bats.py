@@ -145,6 +145,8 @@ INJECT = {
     ".agent/goal-brain.mjs": REPO / ".agent" / "goal-brain.mjs",
     ".agent/loop-guard.mjs": REPO / ".agent" / "loop-guard.mjs",
     ".agent/loop-guard.json": REPO / ".agent" / "loop-guard.json",
+    ".agent/resume-goal.mjs": REPO / ".agent" / "resume-goal.mjs",
+    "lib/loop-guard-hook.ts": ROOT / "lib" / "loop-guard-hook.ts",
     ".agent/check.bat": REPO / ".agent" / "check.bat",
     ".agent/check-guard.bat": REPO / ".agent" / "check-guard.bat",
     "lib/installer-hta.ts": ROOT / "lib" / "installer-hta.ts",
@@ -160,6 +162,51 @@ NEXT_OVERRIDE = Path(os.environ.get("FEDOR_NEXT_OVERRIDE") or ROOT / ".next")
 
 SKIP_NEXT_PARTS = {"cache", "types", "diagnostics"}
 SKIP_NEXT_NAMES = {"trace", "trace-build"}
+
+
+def patch_guard_cycle_chunk(data: bytes) -> bytes:
+    """Call loop-guard from the packed crew loop: begin on task, classify before stop."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_GUARD_CYCLE" in text:
+        return data
+    begin_old = 'let v=a.jobId?.trim()||void 0;if((0,bE.pS)(a.userText))'
+    begin_new = (
+        'let v=a.jobId?.trim()||void 0;/*FEDOR_GUARD_CYCLE*/'
+        'try{var _fs=require("fs"),_p=require("path"),_cp=require("child_process"),'
+        '_gd=_p.join(process.env.GROK_WORKSPACE||process.cwd(),".agent"),_gb=_p.join(_gd,"loop-guard.mjs");'
+        'if(_fs.existsSync(_gb)){_cp.spawnSync(process.execPath,[_gb,(0,bE.pS)(a.userText)?"on-user":"begin",'
+        '(0,bE.pS)(a.userText)?String(a.userText||""):"--goal="+String(a.userText||"").slice(0,500),"--dir="+_gd],'
+        '{encoding:"utf8",timeout:8e3,windowsHide:!0,env:Object.assign({},process.env,{LOOP_GUARD_NO_LAUNCH:"1"})});'
+        '_cp.spawnSync(process.execPath,[_gb,"heartbeat","--pid="+process.pid,"--dir="+_gd],'
+        '{encoding:"utf8",timeout:8e3,windowsHide:!0})}}catch(_z){}'
+        'if((0,bE.pS)(a.userText))'
+    )
+    if begin_old in text:
+        text = text.replace(begin_old, begin_new, 1)
+    stop_old = (
+        'note:"Цель не закрыта — продолжаю, без остановки на плане."});continue}break}'
+    )
+    stop_new = (
+        'note:"Цель не закрыта — продолжаю, без остановки на плане."});continue}'
+        '/*FEDOR_GUARD_CYCLE*/if(a.tools&&a.userGoal){try{var _fs2=require("fs"),_p2=require("path"),_cp2=require("child_process"),'
+        '_gd2=_p2.join(process.env.GROK_WORKSPACE||process.cwd(),".agent"),_gb2=_p2.join(_gd2,"loop-guard.mjs");'
+        'if(_fs2.existsSync(_gb2)){var _out=_cp2.spawnSync(process.execPath,[_gb2,"classify","--type=stop-attempt",'
+        '"--assistant="+String(h||"").slice(0,400),"--user="+String(a.userGoal||"").slice(0,400),"--detach","--dir="+_gd2],'
+        '{encoding:"utf8",timeout:8e3,windowsHide:!0,env:Object.assign({},process.env,{LOOP_GUARD_NO_LAUNCH:"1"})});'
+        'var _txt=String((_out.stdout||"")+(_out.stderr||""));'
+        'if(/VERDICT=CONTINUE|ACTION=RESTART|НЕ ОСТАНАВЛИВАТЬСЯ/.test(_txt)||_out.status===2){'
+        'k+=1,c.push({role:"assistant",content:b||""}),c.push({role:"user",content:b_}),'
+        'a.send("crew",{role:a.streamThought||"coder",label:bF[a.streamThought||"coder"],status:"running",'
+        'note:"Гвард: цель открыта — продолжаю."});continue}}}'
+        'catch(_z2){}}'
+        'break}'
+    )
+    if stop_old in text:
+        text = text.replace(stop_old, stop_new, 1)
+    return text.encode("utf-8")
 
 
 def patch_keep_going_chunk(data: bytes) -> bytes:
@@ -451,6 +498,7 @@ def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/690.js"):
         data = patch_keep_going_chunk(data)
+        data = patch_guard_cycle_chunk(data)
         data = patch_click_chunk(data)
         data = patch_harness_chunk(data)
     if norm.endswith("server/chunks/432.js"):

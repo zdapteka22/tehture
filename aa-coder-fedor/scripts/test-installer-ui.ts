@@ -36,6 +36,7 @@ ok("start does not wipe launchers on error", !/Remove-InstallLaunchers -ProfileD
 ok("start does not write desktop log", !/AA-Coder-Fedor-install\.log/.test(start));
 ok("start does not throw leftover edition", !/Leftover program is/.test(start));
 ok("start turns full memory on by default", /FEDOR_NGP/.test(start) && /Set-EnvVar -Name 'FEDOR_NGP' -Value '1'/.test(start));
+ok("start ships resume-goal", start.includes("resume-goal.mjs"));
 
 const electron = readFileSync(path.join(process.cwd(), "electron/main.cjs"), "utf8");
 ok("electron turns full memory on by default", /FEDOR_NGP/.test(electron) && /process.env.FEDOR_NGP = "1"/.test(electron));
@@ -55,5 +56,6 @@ ok("pack hides leftover chip", pack.includes("false&&(0,a.jsx)(M.$,{size:\"xs\""
 ok("pack injects agent reasoning", pack.includes("Рассуждения агентов") && pack.includes("Что делают"));
 ok("pack opens ход on send", pack.includes("s7();let n=s??"));
 ok("pack patches with sku", pack.includes("def patch_ui_copy(data: bytes, sku: str = \"paid\")"));
+ok("pack wires guard cycle", pack.includes("FEDOR_GUARD_CYCLE") && pack.includes("resume-goal.mjs"));
 
 console.log("installer-ui ok");

@@ -23,7 +23,7 @@
 - протух heartbeat
 - старый `DONE` от другой задачи
 
-Действие: `VERDICT=CONTINUE`, `ACTION=RESTART`, процесс стартует снова.
+Действие: `VERDICT=CONTINUE`, `ACTION=RESTART`. `restart_command` = `auto` → `resume-goal.mjs` пишет nudge и поднимает процесс, если он мёртв. Цикл кодера зовёт `begin` / `heartbeat` / `receipt` / `classify` сам, не только `check.bat`.
 После 3 рестартов подряд → `BLOCKED` (не крутимся вечно).
 
 ## Команды

@@ -35,9 +35,22 @@ function loadJson(file, fallback) {
   }
 }
 
+export function resolveRestart(cfg, dir = __dirname) {
+  const next = { ...cfg };
+  const raw = String(next.restart_command || '').trim().toLowerCase();
+  const resume = path.join(dir, 'resume-goal.mjs');
+  if (!raw || raw === 'null' || raw === 'auto') {
+    if (fs.existsSync(resume)) {
+      next.restart_command = process.execPath;
+      next.restart_args = [resume, `--dir=${dir}`];
+    }
+  }
+  return next;
+}
+
 export function loadConfig(dir = __dirname) {
   const raw = loadJson(path.join(dir, 'loop-guard.json'), {});
-  return { ...DEFAULT_CFG, ...raw };
+  return resolveRestart({ ...DEFAULT_CFG, ...raw }, dir);
 }
 
 export function emptyState(cfg = DEFAULT_CFG) {
@@ -355,18 +368,38 @@ export function beginGoal(state, goal, doneWhen) {
   return next;
 }
 
+function significantPrefix(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase();
+}
+
+function resetStaleBrain(dir, goal) {
+  const file = path.join(dir, 'goal-brain.state.json');
+  try {
+    if (!fs.existsSync(file)) return;
+    const prev = loadJson(file, null);
+    const old = significantPrefix(prev && prev.goal);
+    const next = significantPrefix(goal);
+    if (!old || (next && old !== next)) fs.unlinkSync(file);
+  } catch {
+    /* reset best-effort */
+  }
+}
+
 function cmdBegin(dir, cfg, args) {
-  const state = beginGoal(readState(dir, cfg), argVal(args, 'goal') || '', String(argVal(args, 'done-when') || '').split('|'));
+  const goal = argVal(args, 'goal') || '';
+  const state = beginGoal(readState(dir, cfg), goal, String(argVal(args, 'done-when') || '').split('|'));
+  resetStaleBrain(dir, goal);
   writeState(dir, state);
   printStatus(state);
 }
 
-function cmdHeartbeat(dir, cfg) {
+function cmdHeartbeat(dir, cfg, args = []) {
   const state = readState(dir, cfg);
   state.last_heartbeat = new Date().toISOString();
-  state.pid = process.pid;
+  const pidArg = Number(argVal(args, 'pid') || process.env.FEDOR_AGENT_PID || '');
+  state.pid = pidArg || process.ppid || process.pid;
   writeState(dir, state);
-  fs.writeFileSync(paths(dir).heartbeat, JSON.stringify({ t: state.last_heartbeat, pid: process.pid }), 'utf8');
+  fs.writeFileSync(paths(dir).heartbeat, JSON.stringify({ t: state.last_heartbeat, pid: state.pid }), 'utf8');
   console.log('HEARTBEAT=' + state.last_heartbeat);
 }
 
@@ -546,7 +579,12 @@ function cmdEnforce(dir, cfg) {
   writeState(dir, next);
   printStatus(next);
   if (next.verdict === 'CONTINUE') {
-    if (cls.action === 'RESTART') writeRestartTicket(dir, cls, next);
+    if (cls.action === 'RESTART') {
+      writeRestartTicket(dir, cls, next);
+      const run = runRestartCommand(cfg, { detached: true, cwd: ROOT });
+      console.log('RESTARTED=' + (run.ran ? (run.pid || 'ok') : 'ticket'));
+      appendLog(dir, '- enforce ' + cls.reason + ' -> RESTART #' + next.restarts);
+    }
     console.log('ACTION=' + (cls.action === 'RESTART' ? 'RESTART' : 'НЕ ОСТАНАВЛИВАТЬСЯ'));
     process.exit(EXIT.CONTINUE);
   }
@@ -699,6 +737,29 @@ function selftest() {
     if (prev === undefined) delete process.env.LG_MARK;
     else process.env.LG_MARK = prev;
     pass &= ok('watchdog рестарт процесса', run.ran && fs.existsSync(marker) && fs.readFileSync(marker, 'utf8') === 'ok');
+
+    const resumeSrc = path.join(__dirname, 'resume-goal.mjs');
+    if (fs.existsSync(resumeSrc)) {
+      fs.copyFileSync(resumeSrc, path.join(tmp, 'resume-goal.mjs'));
+      fs.writeFileSync(path.join(tmp, 'loop-guard.json'), JSON.stringify({ restart_command: 'auto' }), 'utf8');
+      const auto = loadConfig(tmp);
+      pass &= ok('auto restart_command задан', auto.restart_command === process.execPath && /resume-goal\.mjs/.test(String(auto.restart_args[0] || '')));
+      fs.writeFileSync(
+        path.join(tmp, 'loop-guard.state.json'),
+        JSON.stringify({ ...emptyState(cfg), goal: 'поднять оплату', last_user: '', last_assistant: 'готово' }),
+        'utf8',
+      );
+      const prevLaunch = process.env.LOOP_GUARD_NO_LAUNCH;
+      process.env.LOOP_GUARD_NO_LAUNCH = '1';
+      const resumed = runRestartCommand(auto, { detached: false, cwd: tmp });
+      if (prevLaunch === undefined) delete process.env.LOOP_GUARD_NO_LAUNCH;
+      else process.env.LOOP_GUARD_NO_LAUNCH = prevLaunch;
+      const nudgeFile = path.join(tmp, 'resume.nudge.json');
+      pass &= ok(
+        'resume-goal пишет nudge',
+        resumed.ran && fs.existsSync(nudgeFile) && /оплату/.test(fs.readFileSync(nudgeFile, 'utf8')),
+      );
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -768,7 +829,7 @@ function main(argv = process.argv.slice(2), dir = __dirname) {
   if (cmd === 'reset') return cmdReset(dir, cfg);
   if (cmd === 'log') return cmdLog(dir, cfg, args);
   if (cmd === 'begin') return cmdBegin(dir, cfg, args);
-  if (cmd === 'heartbeat') return cmdHeartbeat(dir, cfg);
+  if (cmd === 'heartbeat') return cmdHeartbeat(dir, cfg, args);
   if (cmd === 'receipt') return cmdReceipt(dir, cfg, args);
   if (cmd === 'verify-claim') return cmdVerify(dir, cfg, args);
   if (cmd === 'classify') return cmdClassify(dir, cfg, args);

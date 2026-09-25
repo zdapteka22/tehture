@@ -130,6 +130,10 @@ ok(
   }) === false,
 );
 
+const crew = readFileSync(path.join(process.cwd(), "lib/crew/run.ts"), "utf8");
+ok("crew keeps going when guard says so", /decideGuardStop/.test(crew) && /guard\.keepGoing/.test(crew));
+ok("crew writes receipts", /noteGuardTool/.test(crew));
+
 const prompt = readFileSync(path.join(process.cwd(), "lib/prompt.ts"), "utf8");
 ok("prompt forbids stop after one or two tools", /one or two tools/.test(prompt));
 ok("prompt keeps Super Memory", prompt.includes("getMemoryPromptBlock()"));

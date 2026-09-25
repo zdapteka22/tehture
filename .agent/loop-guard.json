@@ -36,6 +36,6 @@
   "state": ".agent/loop-guard.state.json",
   "heartbeat": ".agent/loop-guard.heartbeat",
   "receipts": ".agent/receipts.jsonl",
-  "restart_command": null,
+  "restart_command": "auto",
   "restart_args": []
 }

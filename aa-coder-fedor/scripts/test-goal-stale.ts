@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -43,6 +43,8 @@ ok("цель достигнута -> CONTINUE", /цель достигнута -
 ok("чужая задача stale", /чужая задача -> STALE CONTINUE/.test(agent.stdout || ""));
 ok("agent CONTINUE process.exit(2)", /CONTINUE -> process\.exit\(2\)/.test(agent.stdout || ""));
 ok("LOOPS.md UTF-8 в selftest", /LOOPS\.md UTF-8 без U\+FFFD/.test(agent.stdout || ""));
+ok("auto restart_command задан", /auto restart_command задан/.test(agent.stdout || ""));
+ok("resume-goal пишет nudge", /resume-goal пишет nudge/.test(agent.stdout || ""));
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "goal-stale-"));
 writeFileSync(
@@ -92,6 +94,50 @@ ok("log command writes", (logged.status ?? 1) === 0);
 const cleaned = readFileSync(path.join(logTmp, "LOOPS.md"), "utf8");
 const bad = (cleaned.match(/\uFFFD/g) || []).length;
 ok("log utf8 no replacement chars", bad === 0 && cleaned.includes("path") && cleaned.includes("замена"));
+
+const hookTmp = mkdtempSync(path.join(os.tmpdir(), "guard-hook-"));
+const hookAgent = path.join(hookTmp, ".agent");
+mkdirSync(hookAgent, { recursive: true });
+for (const name of ["loop-guard.mjs", "loop-guard.json", "resume-goal.mjs", "goal-brain.mjs"]) {
+  const src = path.resolve(ROOT, "..", ".agent", name);
+  if (existsSync(src)) writeFileSync(path.join(hookAgent, name), readFileSync(src));
+}
+writeFileSync(
+  path.join(hookAgent, "loop-guard.state.json"),
+  JSON.stringify({ goal: "вчерашняя цель FIX-ДЛЯ-ДРУГОГО-КОДЕРА.md", verdict: "done", loops: 5 }),
+  "utf8",
+);
+writeFileSync(
+  path.join(hookAgent, "goal-brain.state.json"),
+  JSON.stringify({ goal: "FIX-ДЛЯ-ДРУГОГО-КОДЕРА.md", lastVerdict: "CONTINUE", lastCheck: "2026-09-24" }),
+  "utf8",
+);
+const begun = run(path.join(hookAgent, "loop-guard.mjs"), ["begin", "--goal=новая задача: оплата картой", `--dir=${hookAgent}`], hookTmp);
+ok("begin resets stale loops", /VERDICT=CONTINUE/.test(begun.stdout || ""));
+const begunState = JSON.parse(readFileSync(path.join(hookAgent, "loop-guard.state.json"), "utf8"));
+ok("begin clears old loops", (begunState.loops || 0) === 0 && begunState.goal.includes("оплата"));
+ok("begin drops stale brain", !existsSync(path.join(hookAgent, "goal-brain.state.json")));
+const classified = run(
+  path.join(hookAgent, "loop-guard.mjs"),
+  ["classify", "--type=stop-attempt", "--assistant=готово", "--user=новая задача: оплата картой", `--dir=${hookAgent}`],
+  hookTmp,
+);
+ok("stop-attempt restarts", /ACTION=RESTART|VERDICT=CONTINUE/.test(classified.stdout || ""));
+ok("stop-attempt writes ticket or resume", existsSync(path.join(hookAgent, "restart.ticket.json")) || existsSync(path.join(hookAgent, "resume.nudge.json")));
+rmSync(hookTmp, { recursive: true, force: true });
+
+const cfg = readFileSync(path.resolve(ROOT, "..", ".agent", "loop-guard.json"), "utf8");
+ok("config restart is auto", /"restart_command": "auto"/.test(cfg));
+ok("resume-goal exists", existsSync(path.resolve(ROOT, "..", ".agent", "resume-goal.mjs")));
+const hook = readFileSync(path.join(ROOT, "lib", "loop-guard-hook.ts"), "utf8");
+ok("hook begin on user", hook.includes("begin") && hook.includes("noteGuardUser"));
+ok("hook classify on stop", hook.includes("stop-attempt") && hook.includes("decideGuardStop"));
+const crew = readFileSync(path.join(ROOT, "lib", "crew", "run.ts"), "utf8");
+ok("crew calls guard on empty tools", crew.includes("decideGuardStop") && crew.includes("noteGuardTool"));
+const handle = readFileSync(path.join(ROOT, "lib", "fyodor", "handle.ts"), "utf8");
+ok("handle begins guard goal", handle.includes("noteGuardUser"));
+const start = readFileSync(path.join(ROOT, "scripts", "start-grok-coder.ps1"), "utf8");
+ok("start copies resume-goal", start.includes("resume-goal.mjs"));
 
 const loops = path.resolve(ROOT, "..", ".agent", "LOOPS.md");
 if (existsSync(loops)) {

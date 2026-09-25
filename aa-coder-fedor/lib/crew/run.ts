@@ -9,6 +9,7 @@ import { actionFingerprint, FailureMemory, looksFailed, verbalLesson } from "../
 import type { ProviderId, TodoItem } from "../types";
 import { CREW_LABELS, type CrewRole } from "./roles";
 import { GOAL_KEEP_GOING, GOAL_NUDGE, shouldNudgeUntilGoal } from "../fyodor/until-goal";
+import { decideGuardStop, noteGuardTool } from "../loop-guard-hook";
 import { isAbortError, throwIfAborted } from "../run-control";
 
 export type CrewSend = (event: string, data: unknown) => void;
@@ -142,8 +143,9 @@ export async function runToolAgent(options: {
 
     if (!toolCalls.length) {
       throwIfAborted(options.signal);
-      if (
-        options.tools &&
+      const workLoop = Boolean(options.tools && options.userGoal);
+      const needNudge =
+        workLoop &&
         shouldNudgeUntilGoal({
           userText: options.userGoal || "",
           content,
@@ -151,8 +153,9 @@ export async function runToolAgent(options: {
           changedPaths,
           nudges,
           maxNudges,
-        })
-      ) {
+        });
+      const guard = workLoop ? decideGuardStop(content, options.userGoal || "") : { keepGoing: false };
+      if ((needNudge || guard.keepGoing) && nudges < maxNudges) {
         nudges += 1;
         messages.push({ role: "assistant", content: text || "" });
         messages.push({ role: "user", content: GOAL_NUDGE });
@@ -160,7 +163,9 @@ export async function runToolAgent(options: {
           role: options.streamThought || "coder",
           label: CREW_LABELS[options.streamThought || "coder"],
           status: "running",
-          note: "Цель не закрыта — продолжаю, без остановки на плане.",
+          note: guard.keepGoing
+            ? `Гвард: ${guard.reason || "цель открыта"} — продолжаю, без остановки.`
+            : "Цель не закрыта — продолжаю, без остановки на плане.",
         });
         continue;
       }
@@ -230,6 +235,11 @@ export async function runToolAgent(options: {
         options.send("todos", { todos });
       }
       const observation = formatAciObservation(result.output);
+      try {
+        noteGuardTool(call.name, observation, looksFailed(result.output) ? observation : null);
+      } catch {
+        // guard must never block the tool loop
+      }
       if (looksFailed(result.output) || shouldStopOnBoundary(result.output)) {
         failures.rememberFailure(fingerprint, result.output);
       }

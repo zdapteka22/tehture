@@ -636,7 +636,7 @@ $agentDir = Join-Path -Path $workspace -ChildPath '.agent'
 $bundledAgent = Join-Path -Path $AppRoot -ChildPath 'coder-v2\src\agent'
 if (Test-Path -LiteralPath $bundledAgent) {
   New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
-  foreach ($name in @('goal-brain.mjs', 'loop-guard.mjs')) {
+  foreach ($name in @('goal-brain.mjs', 'loop-guard.mjs', 'loop-guard.json', 'resume-goal.mjs')) {
     $src = Join-Path -Path $bundledAgent -ChildPath $name
     $dst = Join-Path -Path $agentDir -ChildPath $name
     if ((Test-Path -LiteralPath $src) -and -not (Test-Path -LiteralPath $dst)) {

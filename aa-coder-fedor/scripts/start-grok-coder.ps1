@@ -1120,7 +1120,7 @@ try {
   $bundledPack = Join-Path -Path $Root -ChildPath '.agent'
   $bundledAgent = Join-Path -Path $Root -ChildPath 'coder-v2\src\agent'
   New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
-  foreach ($name in @('goal-brain.mjs', 'loop-guard.mjs', 'loop-guard.json', 'check.bat', 'check-guard.bat')) {
+  foreach ($name in @('goal-brain.mjs', 'loop-guard.mjs', 'loop-guard.json', 'resume-goal.mjs', 'check.bat', 'check-guard.bat')) {
     $src = $null
     $packSrc = Join-Path -Path $bundledPack -ChildPath $name
     $kitSrc = Join-Path -Path $bundledAgent -ChildPath $name
