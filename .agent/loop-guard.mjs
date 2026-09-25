@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// loop-guard 2.0 — стоп только если обоснован; иначе RESTART.
+// loop-guard 2.2 — пустой done_when не стоп; no_reason = CONTINUE; state пишется всегда.
 // Ноль зависимостей. Windows + POSIX.
 
 import fs from 'node:fs';
@@ -30,6 +30,32 @@ const DEFAULT_CFG = {
 
 export function unjustifiedAction(cfg = DEFAULT_CFG) {
   return String(cfg.on_unjustified || 'continue').toLowerCase() === 'restart' ? 'RESTART' : 'CONTINUE';
+}
+
+export function hasDoneCriteria(state = {}) {
+  return (state.done_when || []).some((x) => String(x || '').trim());
+}
+
+export function isFollowUpText(text, prevGoal = '') {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return true;
+  if (!String(prevGoal || '').trim()) return false;
+  if (significantPrefix(prevGoal) === significantPrefix(t)) return true;
+  if (t.length <= 16) return true;
+  if (/[?]/.test(t) && t.length <= 160) return true;
+  if (/^(что|как|почему|зачем|кто|где|чё|че так|а что|ну что)\b/i.test(t)) return true;
+  if (/(завис|долго|молч|опять встал|не процесс)/i.test(t)) return true;
+  return false;
+}
+
+/** no_reason / пустой критерий никогда не рестартят, даже если on_unjustified=restart. */
+export function actionForReason(reason, cfg = DEFAULT_CFG) {
+  const r = String(reason || '');
+  if (r === 'no_reason' || r === 'open_goal' || r === 'restart_limit_continue') return 'CONTINUE';
+  if (r === 'process_died') return 'RESTART';
+  if (r === 'user_stop' || r === 'external_deny') return 'STOP';
+  if (r === 'max_loops') return 'BLOCKED';
+  return unjustifiedAction(cfg);
 }
 
 export function hadToolWork(state = {}, event = {}) {
@@ -123,8 +149,8 @@ export function isExternalDeny(text, cfg = DEFAULT_CFG) {
 }
 
 export function goalVerified(state) {
-  const need = state.done_when || [];
-  if (!need.length) return false;
+  if (!hasDoneCriteria(state)) return false;
+  const need = (state.done_when || []).filter((x) => String(x || '').trim());
   const have = new Set(state.verified || []);
   return need.every((x) => have.has(x));
 }
@@ -154,7 +180,7 @@ export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
   const now = event.now || Date.now();
   const receipts = event.receipts || [];
   const staleMs = cfg.heartbeat_stale_ms ?? 300000;
-  const soft = unjustifiedAction(cfg);
+  const soft = (reason) => actionForReason(reason, cfg);
 
   if (isUserStop(event.userText, cfg)) {
     return { justified: true, reason: 'user_stop', action: 'STOP', verdict: 'DONE' };
@@ -170,7 +196,7 @@ export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
   }
 
   if (state.verdict === 'DONE' && !goalVerified(state)) {
-    return { justified: false, reason: 'stale_done', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'stale_done', action: soft('stale_done'), verdict: 'CONTINUE' };
   }
   if (event.processAlive === false && !goalVerified(state)) {
     return { justified: false, reason: 'process_died', action: 'RESTART', verdict: 'CONTINUE' };
@@ -179,25 +205,28 @@ export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
     if (event.processAlive === false) {
       return { justified: false, reason: 'process_died', action: 'RESTART', verdict: 'CONTINUE' };
     }
-    return { justified: false, reason: 'stale_heartbeat', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'stale_heartbeat', action: soft('stale_heartbeat'), verdict: 'CONTINUE' };
   }
   if (isPlanLanguage(event.assistantText, cfg)) {
-    return { justified: false, reason: 'plan_language', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'plan_language', action: soft('plan_language'), verdict: 'CONTINUE' };
   }
   if (isDoneClaim(event.assistantText, cfg) && receipts.length === 0 && (state.receipts_this_turn || 0) === 0 && !hadToolWork(state, event)) {
-    return { justified: false, reason: 'done_without_evidence', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'done_without_evidence', action: soft('done_without_evidence'), verdict: 'CONTINUE' };
   }
   if (isDoneClaim(event.assistantText, cfg) && hasUnrecoveredError(receipts)) {
-    return { justified: false, reason: 'lie_about_tools', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'lie_about_tools', action: soft('lie_about_tools'), verdict: 'CONTINUE' };
   }
   if (isDoneClaim(event.assistantText, cfg) && event.stateChanged === false && !state.state_changed) {
     if (hadToolWork(state, event)) {
       return { justified: false, reason: 'in_progress', action: 'CONTINUE', verdict: 'CONTINUE' };
     }
-    return { justified: false, reason: 'no_state_change', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'no_state_change', action: soft('no_state_change'), verdict: 'CONTINUE' };
+  }
+  if (event.type === 'stop-attempt' && !hasDoneCriteria(state)) {
+    return { justified: false, reason: 'open_goal', action: 'CONTINUE', verdict: 'CONTINUE' };
   }
   if (event.type === 'stop-attempt' && !goalVerified(state)) {
-    return { justified: false, reason: 'no_reason', action: soft, verdict: 'CONTINUE' };
+    return { justified: false, reason: 'no_reason', action: 'CONTINUE', verdict: 'CONTINUE' };
   }
 
   return { justified: false, reason: 'in_progress', action: 'CONTINUE', verdict: 'CONTINUE' };
@@ -221,9 +250,9 @@ export function applyClassification(state, cls, cfg = DEFAULT_CFG) {
   }
   const maxR = next.max_restarts ?? cfg.max_restarts ?? 3;
   if ((next.restarts || 0) >= maxR) {
-    next.verdict = 'BLOCKED';
-    next.reason = 'restart limit';
-    next.stop_reason = 'restart_limit';
+    next.verdict = 'CONTINUE';
+    next.reason = 'restart_limit_continue';
+    next.stop_reason = null;
     next.last_unjustified = cls.reason;
     return next;
   }
@@ -315,7 +344,17 @@ function readState(dir, cfg) {
 }
 
 function writeState(dir, state) {
-  fs.writeFileSync(paths(dir).state, JSON.stringify(state, null, 2), 'utf8');
+  const file = paths(dir).state;
+  const body = JSON.stringify(state, null, 2);
+  const tmp = file + '.tmp';
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(tmp, body, 'utf8');
+  try {
+    fs.renameSync(tmp, file);
+  } catch {
+    fs.writeFileSync(file, body, 'utf8');
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
 }
 
 export function sanitizeLogText(text) {
@@ -370,10 +409,21 @@ function printStatus(state) {
   if (state.restarts) console.log('RESTARTS=' + state.restarts + '/' + (state.max_restarts || 3));
 }
 
+const REST_KEYS = new Set(['goal', 'assistant', 'user', 'observation', 'text']);
+
 function argVal(args, name) {
   const p = '--' + name + '=';
-  const hit = args.find((a) => a.startsWith(p));
-  return hit ? hit.slice(p.length) : undefined;
+  const i = args.findIndex((a) => a.startsWith(p) || a === '--' + name);
+  if (i < 0) return undefined;
+  const first = args[i].startsWith(p) ? args[i].slice(p.length) : (args[i + 1] && !String(args[i + 1]).startsWith('--') ? args[i + 1] : '');
+  if (!REST_KEYS.has(name)) return first;
+  const start = args[i].startsWith(p) ? i + 1 : i + 2;
+  const extra = [];
+  for (let j = start; j < args.length; j += 1) {
+    if (String(args[j]).startsWith('--')) break;
+    extra.push(args[j]);
+  }
+  return [first, ...extra].filter((x) => x !== undefined && x !== '').join(' ');
 }
 
 function flag(args, name) {
@@ -381,13 +431,29 @@ function flag(args, name) {
 }
 
 export function beginGoal(state, goal, doneWhen) {
+  const incoming = (doneWhen || []).filter(Boolean);
+  const prevGoal = String(state.goal || '').trim();
+  const nextGoal = String(goal || '').trim();
+  const follow = Boolean(prevGoal && isFollowUpText(nextGoal, prevGoal));
+  if (follow) {
+    const next = { ...state };
+    if (incoming.length) next.done_when = incoming;
+    next.verdict = 'CONTINUE';
+    next.reason = 'follow-up';
+    next.stop_reason = null;
+    next.last_heartbeat = new Date().toISOString();
+    next.pid = process.pid;
+    next.last_user = nextGoal || next.last_user;
+    return next;
+  }
   const next = emptyState({ max_loops: state.max_loops, max_restarts: state.max_restarts });
-  next.goal = goal || '';
-  next.done_when = (doneWhen || []).filter(Boolean);
+  next.goal = nextGoal;
+  next.done_when = incoming;
   next.verdict = 'CONTINUE';
   next.reason = 'start';
   next.last_heartbeat = new Date().toISOString();
   next.pid = process.pid;
+  next.last_user = nextGoal;
   return next;
 }
 
@@ -459,13 +525,15 @@ function cmdClassify(dir, cfg, args) {
   };
   const cls = classifyStop(state, event, cfg);
   const next = applyClassification(state, cls, cfg);
+  next.loops = (Number(state.loops) || 0) + 1;
   next.last_assistant = event.assistantText || next.last_assistant;
   next.last_user = event.userText || next.last_user;
   writeState(dir, next);
   printStatus(next);
   console.log('JUSTIFIED=' + (cls.justified ? 'yes' : 'no'));
   console.log('ACTION=' + cls.action);
-  if (cls.action === 'RESTART' && next.verdict === 'CONTINUE') {
+  appendLog(dir, '- classify ' + cls.reason + ' action=' + cls.action + ' loops=' + next.loops + ' restarts=' + (next.restarts || 0));
+  if (cls.action === 'RESTART' && next.verdict === 'CONTINUE' && cls.reason === 'process_died') {
     writeRestartTicket(dir, cls, next);
     const run = runRestartCommand(cfg, { detached: flag(args, 'detach'), cwd: ROOT });
     if (run.ran) console.log('RESTARTED=' + (run.pid || run.status));
@@ -599,16 +667,18 @@ function cmdEnforce(dir, cfg) {
     stateChanged: state.state_changed,
   }, cfg);
   const next = applyClassification(state, cls, cfg);
+  next.loops = (Number(state.loops) || 0) + 1;
   writeState(dir, next);
   printStatus(next);
+  appendLog(dir, '- enforce ' + cls.reason + ' action=' + cls.action + ' loops=' + next.loops + ' restarts=' + (next.restarts || 0));
   if (next.verdict === 'CONTINUE') {
-    if (cls.action === 'RESTART') {
+    if (cls.action === 'RESTART' && cls.reason === 'process_died') {
       writeRestartTicket(dir, cls, next);
       const run = runRestartCommand(cfg, { detached: true, cwd: ROOT });
       console.log('RESTARTED=' + (run.ran ? (run.pid || 'ok') : 'ticket'));
       appendLog(dir, '- enforce ' + cls.reason + ' -> RESTART #' + next.restarts);
     }
-    console.log('ACTION=' + (cls.action === 'RESTART' ? 'RESTART' : 'НЕ ОСТАНАВЛИВАТЬСЯ'));
+    console.log('ACTION=' + (cls.action === 'RESTART' && cls.reason === 'process_died' ? 'RESTART' : 'НЕ ОСТАНАВЛИВАТЬСЯ'));
     process.exit(EXIT.CONTINUE);
   }
   if (next.verdict === 'BLOCKED') {
@@ -644,13 +714,14 @@ function cmdWatchdog(dir, cfg, args) {
   const next = applyClassification(state, cls, cfg);
   writeState(dir, next);
   printStatus(next);
+  appendLog(dir, '- watchdog ' + cls.reason + ' action=' + cls.action + ' loops=' + (next.loops || 0) + ' restarts=' + (next.restarts || 0));
   console.log('ALIVE=' + (alive ? '1' : '0'));
-  console.log('ACTION=' + cls.action);
-  if (next.verdict === 'BLOCKED' && next.reason === 'restart limit') {
-    process.exitCode = EXIT.WATCHDOG_EXHAUSTED;
+  console.log('ACTION=' + (next.reason === 'restart_limit_continue' ? 'CONTINUE' : cls.action));
+  if (next.reason === 'restart_limit_continue') {
+    process.exitCode = EXIT.CONTINUE;
     return;
   }
-  if (cls.action === 'RESTART' && next.verdict === 'CONTINUE') {
+  if (cls.action === 'RESTART' && next.verdict === 'CONTINUE' && cls.reason === 'process_died') {
     writeRestartTicket(dir, cls, next);
     const run = runRestartCommand(cfg, { detached: !flag(args, 'sync'), cwd: ROOT });
     console.log('RESTARTED=' + (run.ran ? (run.pid || run.status) : 'ticket'));
@@ -699,11 +770,21 @@ function selftest() {
   pass &= ok('обычный текст не стоп', !isUserStop('продолжай работу', cfg));
 
   s = emptyState(cfg);
+  s.goal = 'не процесы а имено ты опять завис';
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'скажи чини' }, cfg);
+  pass &= ok('пустой done_when не no_reason', c.reason === 'open_goal' && c.action === 'CONTINUE' && c.verdict === 'CONTINUE');
+  const restartCfg = { ...cfg, on_unjustified: 'restart' };
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'скажи чини' }, restartCfg);
+  pass &= ok('пустой done_when даже при restart', c.action === 'CONTINUE' && c.reason === 'open_goal');
+
+  s = emptyState(cfg);
   s.goal = 'сервис карт';
   s.done_when = ['qr'];
   c = classifyStop(s, { type: 'stop-attempt', assistantText: '' }, cfg);
   const a1 = applyClassification(s, c, cfg);
   pass &= ok('внезапная остановка -> CONTINUE', !c.justified && c.reason === 'no_reason' && c.action === 'CONTINUE' && a1.verdict === 'CONTINUE' && (a1.restarts || 0) === 0);
+  c = classifyStop(s, { type: 'stop-attempt' }, restartCfg);
+  pass &= ok('no_reason не рестартит', c.reason === 'no_reason' && c.action === 'CONTINUE');
 
   c = classifyStop(s, { type: 'stop-attempt', assistantText: 'готово, смотри отчёт' }, cfg);
   pass &= ok('обычное готово не стоп', c.action === 'CONTINUE' && c.reason !== 'done_without_evidence');
@@ -730,7 +811,7 @@ function selftest() {
   lim.restarts = 3;
   c = classifyStop(lim, { type: 'process-check', processAlive: false }, cfg);
   const a2 = applyClassification(lim, c, cfg);
-  pass &= ok('лимит рестартов -> BLOCKED', a2.verdict === 'BLOCKED' && a2.reason === 'restart limit');
+  pass &= ok('лимит рестартов не глушит', a2.verdict === 'CONTINUE' && a2.reason === 'restart_limit_continue');
 
   let stale = emptyState(cfg);
   stale.verdict = 'DONE';
@@ -748,6 +829,29 @@ function selftest() {
   withTool.state_changed = true;
   c = classifyStop(withTool, { type: 'stop-attempt', assistantText: 'цель достигнута', stateChanged: true, receipts: [makeReceipt('write', 'ok', null, cfg)] }, cfg);
   pass &= ok('ход с инструментом не no_state_change', c.reason !== 'no_state_change');
+
+  pass &= ok('вопрос это follow-up', isFollowUpText('ты опять завис', 'почини оплату'));
+  pass &= ok('новая задача не follow-up', !isFollowUpText('новая задача: оплата картой', 'вчерашняя цель про клик'));
+
+  const persistDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-persist-'));
+  try {
+    const started = beginGoal({ ...emptyState({ max_loops: 256, max_restarts: 3 }), loops: 5, restarts: 2, goal: 'почини оплату' }, 'не процесы а имено ты опять завис', []);
+    pass &= ok('begin на вопросе хранит счётчики', started.loops === 5 && started.restarts === 2 && started.reason === 'follow-up');
+    writeState(persistDir, started);
+    const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'classify', '--type=stop-attempt', '--assistant=скажи чини', `--dir=${persistDir}`], {
+      cwd: persistDir,
+      encoding: 'utf8',
+      timeout: 8000,
+      windowsHide: true,
+    });
+    const after = JSON.parse(fs.readFileSync(path.join(persistDir, 'loop-guard.state.json'), 'utf8'));
+    const log = fs.existsSync(path.join(persistDir, 'LOOPS.md')) ? fs.readFileSync(path.join(persistDir, 'LOOPS.md'), 'utf8') : '';
+    pass &= ok('classify пишет loops в state', after.loops === 6 && after.restarts === 2);
+    pass &= ok('classify не рестартит вопрос', /ACTION=CONTINUE/.test(child.stdout || '') && !/RESTARTED=/.test(child.stdout || ''));
+    pass &= ok('LOOPS.md и state вместе', /loops=6/.test(log) && after.loops === 6);
+  } finally {
+    fs.rmSync(persistDir, { recursive: true, force: true });
+  }
 
   const rec = makeReceipt('curl', 'HEALTH ok', null, cfg);
   const v1 = verifyReceipt(rec, cfg);

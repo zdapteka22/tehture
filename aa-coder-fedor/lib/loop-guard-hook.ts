@@ -88,6 +88,11 @@ export function noteGuardUser(text: string): void {
     runGuard(["on-user", raw], dir);
     return;
   }
+  if (!taskNeedsWork(raw)) {
+    runGuard(["on-user", raw], dir);
+    runGuard(["heartbeat", `--pid=${process.pid}`], dir);
+    return;
+  }
   runGuard(["begin", `--goal=${raw.slice(0, 500)}`], dir);
   runGuard(["heartbeat", `--pid=${process.pid}`], dir);
 }

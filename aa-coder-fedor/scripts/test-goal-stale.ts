@@ -127,17 +127,43 @@ ok(
   "stop-attempt does not restart process",
   !existsSync(path.join(hookAgent, "restart.ticket.json")) && !existsSync(path.join(hookAgent, "resume.nudge.json")),
 );
+const classifiedState = JSON.parse(readFileSync(path.join(hookAgent, "loop-guard.state.json"), "utf8"));
+ok("classify пишет loops в state", (classifiedState.loops || 0) >= 1);
+writeFileSync(
+  path.join(hookAgent, "loop-guard.state.json"),
+  JSON.stringify({ ...classifiedState, loops: 7, restarts: 2, goal: "почини оплату", done_when: [] }, null, 2),
+  "utf8",
+);
+const follow = run(
+  path.join(hookAgent, "loop-guard.mjs"),
+  ["begin", "--goal=не процесы а имено ты опять завис", `--dir=${hookAgent}`],
+  hookTmp,
+);
+const followState = JSON.parse(readFileSync(path.join(hookAgent, "loop-guard.state.json"), "utf8"));
+ok("begin на вопросе не обнуляет счётчики", (follow.status ?? 1) === 0 && followState.loops === 7 && followState.restarts === 2);
+ok("вопрос не даёт done_when", Array.isArray(followState.done_when) && followState.done_when.length === 0);
+const questionStop = run(
+  path.join(hookAgent, "loop-guard.mjs"),
+  ["classify", "--type=stop-attempt", "--assistant=скажи чини", `--dir=${hookAgent}`],
+  hookTmp,
+);
+const questionState = JSON.parse(readFileSync(path.join(hookAgent, "loop-guard.state.json"), "utf8"));
+ok("пустой done_when не рестартит", /ACTION=CONTINUE/.test(questionStop.stdout || "") && !/RESTARTED=/.test(questionStop.stdout || ""));
+ok("пустой done_when пишет loops", questionState.loops === 8 && questionState.restarts === 2);
+ok("пустой done_when это open_goal", /open_goal/.test(questionStop.stdout || "") || questionState.reason === "open_goal");
 rmSync(hookTmp, { recursive: true, force: true });
 
 const cfg = readFileSync(path.resolve(ROOT, "..", ".agent", "loop-guard.json"), "utf8");
 ok("config restart is auto", /"restart_command": "auto"/.test(cfg));
 ok("config unjustified is continue", /"on_unjustified": "continue"/.test(cfg));
+ok("config empty done_when is not a violation", /Пустой done_when/.test(cfg));
 ok("config heartbeat is 5 min", /"heartbeat_stale_ms": 300000/.test(cfg));
 ok("config done phrases are strict", /"цель достигнута"/.test(cfg) && /"задача закрыта"/.test(cfg) && !/"done_phrases": \[[^\]]*"готово"/.test(cfg));
 ok("config plan phrases drop heading", /"plan_phrases": \[[^\]]*"сделаю позже"/.test(cfg) && !/"plan_phrases": \[[^\]]*"план:"/.test(cfg));
 ok("resume-goal exists", existsSync(path.resolve(ROOT, "..", ".agent", "resume-goal.mjs")));
 const hook = readFileSync(path.join(ROOT, "lib", "loop-guard-hook.ts"), "utf8");
 ok("hook begin on user", hook.includes("begin") && hook.includes("noteGuardUser"));
+ok("hook skips begin on chat", /!taskNeedsWork/.test(hook) && hook.includes("on-user"));
 ok("hook classify on stop", hook.includes("stop-attempt") && hook.includes("decideGuardStop"));
 ok("hook classify without detach", !hook.includes("--detach"));
 const crew = readFileSync(path.join(ROOT, "lib", "crew", "run.ts"), "utf8");
