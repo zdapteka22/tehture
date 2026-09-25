@@ -75,40 +75,49 @@ ok(
 );
 
 ok(
-  "vk: real group_id still keeps going",
+  "vk: real group_id stops",
   nudge({
     userText: "создай сообщество вк",
     content: "сообщество создано group_id: 99881",
     usedTools: ["browser_navigate", "browser_click", "browser_type", "run_terminal_cmd"],
-  }) === true,
+  }) === false,
 );
 
 ok(
-  "open url after navigate still keeps going",
+  "open url after navigate stops",
   nudge({
     userText: "открой https://example.com",
     content: "Открыл example.com",
     usedTools: ["browser_navigate"],
-  }) === true,
+  }) === false,
 );
 
 ok(
-  "code fix after one write keeps going",
+  "code fix after write stops",
   nudge({
     userText: "исправь баг в src/price.js",
     content: "Поправил файл.",
     usedTools: ["write_file"],
     changedPaths: ["src/price.js"],
-  }) === true,
+  }) === false,
 );
 
 ok(
-  "desktop note after write still keeps going",
+  "desktop note after write stops",
   nudge({
     userText: "напиши текстовый файл заметка на рабочем столе",
     content: "Записал заметку на рабочий стол.",
     usedTools: ["write_pc_file"],
     changedPaths: ["C:/Users/Dir/Desktop/zametka.txt"],
+  }) === false,
+);
+
+ok(
+  "code fix without write keeps going",
+  nudge({
+    userText: "исправь баг в src/price.js",
+    content: "Сейчас поправлю файл.",
+    usedTools: [],
   }) === true,
 );
 
@@ -131,7 +140,8 @@ ok(
 );
 
 const crew = readFileSync(path.join(process.cwd(), "lib/crew/run.ts"), "utf8");
-ok("crew keeps going when guard says so", /decideGuardStop/.test(crew) && /guard\.keepGoing/.test(crew));
+ok("crew asks guard", /decideGuardStop/.test(crew));
+ok("crew stops when work is done", /stopDone/.test(crew) && /needNudge/.test(crew));
 ok("crew writes receipts", /noteGuardTool/.test(crew));
 
 const prompt = readFileSync(path.join(process.cwd(), "lib/prompt.ts"), "utf8");

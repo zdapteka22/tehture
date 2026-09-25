@@ -138,9 +138,9 @@ export function missingGoalWork(userText: string, usedTools: string[], changedPa
 }
 
 /**
- * Work tasks keep the tool loop alive even after the goal looks done.
- * Stop only on user «стоп», hard boundary, abort, or the safety ceiling.
- * A chat question with no PC work may end without a nudge.
+ * Keep going only while the job is unfinished.
+ * Stop when the work is actually done, the user says стоп, abort, or a hard boundary.
+ * «Готово» without evidence, a plan, or a missing write/click is not done.
  */
 export function shouldNudgeUntilGoal(opts: {
   userText: string;
@@ -160,11 +160,27 @@ export function shouldNudgeUntilGoal(opts: {
   if (looksLikeNarratingWork(opts.content) || looksUnfinished(opts.content) || looksLikeAskingUser(opts.content)) {
     return true;
   }
+  if (missingGoalWork(opts.userText, opts.usedTools, opts.changedPaths)) return true;
+
   const liveSite =
     looksLikeOperate(opts.userText) ||
     looksLikeBrowserWork(opts.userText) ||
     looksLikeKeepGoing(opts.userText) ||
-    usedLiveSiteTools(opts.usedTools);
-  if (liveSite || looksLikeKeepGoing(opts.userText) || taskNeedsWork(opts.userText)) return true;
+    usedLiveSiteTools(opts.usedTools) ||
+    isLiveOutcomeJob(opts.userText);
+  if (liveSite) {
+    if (looksLikeOperateSuccess(opts.userText, opts.content)) return false;
+    const justOpen =
+      looksLikeOpen(opts.userText) &&
+      !isLiveOutcomeJob(opts.userText) &&
+      !looksLikeWrite(opts.userText) &&
+      !wantsLiveOutcome(opts.userText) &&
+      opts.usedTools.some((name) => OPEN_TOOLS.test(String(name || "")));
+    if (justOpen) return false;
+    return true;
+  }
+
+  if (taskNeedsWork(opts.userText) && didPcWork(opts.usedTools, opts.changedPaths)) return false;
+  if (looksLikeKeepGoing(opts.userText) && !didPcWork(opts.usedTools, opts.changedPaths)) return true;
   return false;
 }

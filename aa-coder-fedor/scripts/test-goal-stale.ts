@@ -39,7 +39,7 @@ ok("coder-v2 CONTINUE process.exit(2)", /CONTINUE -> process\.exit\(2\)/.test(wr
 const agent = run(AGENT, ["selftest"], path.dirname(AGENT));
 console.log(agent.stdout);
 ok("agent loop-guard selftest", (agent.status ?? 1) === 0 && /selftest passed/.test(agent.stdout || ""));
-ok("цель достигнута -> CONTINUE", /цель достигнута -> CONTINUE/.test(agent.stdout || ""));
+ok("цель достигнута -> DONE", /цель достигнута -> DONE/.test(agent.stdout || ""));
 ok("чужая задача stale", /чужая задача -> STALE CONTINUE/.test(agent.stdout || ""));
 ok("agent CONTINUE process.exit(2)", /CONTINUE -> process\.exit\(2\)/.test(agent.stdout || ""));
 ok("LOOPS.md UTF-8 в selftest", /LOOPS\.md UTF-8 без U\+FFFD/.test(agent.stdout || ""));

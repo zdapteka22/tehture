@@ -192,7 +192,7 @@ export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
     return { justified: true, reason: 'max_loops', action: 'BLOCKED', verdict: 'BLOCKED' };
   }
   if (goalVerified(state) && !hasUnrecoveredError(receipts) && !isPlanLanguage(event.assistantText, cfg)) {
-    return { justified: false, reason: 'goal_reached_keep_going', action: 'CONTINUE', verdict: 'CONTINUE' };
+    return { justified: true, reason: 'goal_verified', action: 'STOP', verdict: 'DONE' };
   }
 
   if (state.verdict === 'DONE' && !goalVerified(state)) {
@@ -650,13 +650,15 @@ export function autoGoalVerdict(dir) {
 }
 
 function cmdEnforce(dir, cfg) {
-  const brain = autoGoalVerdict(dir);
-  if (brain.stale || (brain.verdict === 'CONTINUE' && /STALE=1/.test(brain.out))) {
-    console.log(brain.out);
-    console.log('ACTION=НЕ ОСТАНАВЛИВАТЬСЯ: сделай следующий ход.');
-    process.exit(EXIT.CONTINUE);
-  }
   const state = readState(dir, cfg);
+  if (!goalVerified(state)) {
+    const brain = autoGoalVerdict(dir);
+    if (brain.stale || (brain.verdict === 'CONTINUE' && /STALE=1/.test(brain.out))) {
+      console.log(brain.out);
+      console.log('ACTION=НЕ ОСТАНАВЛИВАТЬСЯ: сделай следующий ход.');
+      process.exit(EXIT.CONTINUE);
+    }
+  }
   const cls = classifyStop(state, {
     type: 'stop-attempt',
     userText: state.last_user,
@@ -763,7 +765,7 @@ function selftest() {
   s.done_when = ['a', 'b'];
   s.verified = ['a', 'b'];
   c = classifyStop(s, { type: 'stop-attempt' }, cfg);
-  pass &= ok('цель достигнута -> CONTINUE', !c.justified && c.verdict === 'CONTINUE' && c.reason === 'goal_reached_keep_going');
+  pass &= ok('цель достигнута -> DONE', c.justified && c.verdict === 'DONE' && c.reason === 'goal_verified' && c.action === 'STOP');
 
   pass &= ok('стоп пользователя', isUserStop('остановись', cfg));
   pass &= ok('распознан стоп', isUserStop('stop please', cfg));

@@ -227,7 +227,7 @@ def main() -> None:
     st["verified"] = ["wrote"]
     write_state(st)
     text = guard("enforce")
-    ok("goal verified still CONTINUE/2", "EXITCODE=2" in text and "CONTINUE" in text, text)
+    ok("goal verified stops DONE/0", "EXITCODE=0" in text and field(text, "VERDICT") == "DONE", text)
 
     reset_work()
     cfg = json.loads((WORKDIR_L / "loop-guard.json").read_text(encoding="utf-8"))

@@ -62,13 +62,13 @@ def main() -> None:
     tsx = run(["npx", "tsx", "scripts/test-until-goal.ts"], cwd=ROOT)
     print(tsx.stdout)
     ok("until-goal tests", tsx.returncode == 0)
-    ok("goal reached still going", "vk: real group_id still keeps going" in tsx.stdout)
+    ok("goal reached stops", "vk: real group_id stops" in tsx.stdout)
     ok("user stop still works", "user stop is respected" in tsx.stdout)
 
-    # loop-guard: goal verified must CONTINUE
+    # loop-guard: goal verified must STOP
     guard = run(["node", str(AGENT / "loop-guard.mjs"), "selftest"], cwd=AGENT)
     print(guard.stdout)
-    ok("loop-guard selftest", guard.returncode == 0 and "цель достигнута -> CONTINUE" in guard.stdout)
+    ok("loop-guard selftest", guard.returncode == 0 and "цель достигнута -> DONE" in guard.stdout)
 
     # enforce after a finished goal still exits 2 (keep going)
     gdir = Path("/tmp/fedor-guard-keep")
@@ -92,7 +92,7 @@ def main() -> None:
     state_path.write_text(json.dumps(state), encoding="utf-8")
     enforce = run(["node", str(gdir / "loop-guard.mjs"), "enforce"], cwd=gdir)
     print(enforce.stdout)
-    ok("enforce after goal is CONTINUE/2", enforce.returncode == 2 and "CONTINUE" in enforce.stdout)
+    ok("enforce after verified goal is DONE/0", enforce.returncode == 0 and "DONE" in enforce.stdout)
 
     # Packed installer still has keep-going source
     bat_path = Path("/opt/cursor/artifacts/AA-Coder-Fedor-3.0-Free-Setup.bat")

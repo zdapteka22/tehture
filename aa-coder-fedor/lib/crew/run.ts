@@ -155,7 +155,8 @@ export async function runToolAgent(options: {
           maxNudges,
         });
       const guard = workLoop ? decideGuardStop(content, options.userGoal || "") : { keepGoing: false };
-      if ((needNudge || guard.keepGoing) && nudges < maxNudges) {
+      const stopDone = guard.verdict === "DONE" || guard.reason === "user_stop" || guard.reason === "goal_verified";
+      if (!stopDone && needNudge && nudges < maxNudges) {
         nudges += 1;
         messages.push({ role: "assistant", content: text || "" });
         messages.push({ role: "user", content: GOAL_NUDGE });
