@@ -208,7 +208,7 @@ def patch_guard_cycle_chunk(data: bytes) -> bytes:
         'if(/VERDICT=CONTINUE|ACTION=RESTART|НЕ ОСТАНАВЛИВАТЬСЯ/.test(_txt)||_out.status===2){'
         'k+=1,c.push({role:"assistant",content:b||""}),c.push({role:"user",content:b_}),'
         'a.send("crew",{role:a.streamThought||"coder",label:bF[a.streamThought||"coder"],status:"running",'
-        'note:"Гвард: цель открыта — продолжаю."});continue}}}'
+        'note:"Цель не закрыта — делаю следующий шаг."});continue}}}'
         'catch(_z2){}}'
         'break}'
     )

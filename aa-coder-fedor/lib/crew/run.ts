@@ -163,9 +163,7 @@ export async function runToolAgent(options: {
           role: options.streamThought || "coder",
           label: CREW_LABELS[options.streamThought || "coder"],
           status: "running",
-          note: guard.keepGoing
-            ? `Гвард: ${guard.reason || "цель открыта"} — продолжаю, без остановки.`
-            : "Цель не закрыта — продолжаю, без остановки на плане.",
+          note: "Цель не закрыта — делаю следующий шаг.",
         });
         continue;
       }

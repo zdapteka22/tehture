@@ -112,7 +112,6 @@ export function decideGuardStop(assistantText: string, userText = ""): GuardDeci
     "--type=stop-attempt",
     `--assistant=${String(assistantText || "").slice(0, 500)}`,
     `--user=${rawUser.slice(0, 500)}`,
-    "--detach",
   ]);
   return parseDecision(r.out, r.status);
 }

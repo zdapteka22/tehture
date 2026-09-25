@@ -16,16 +16,31 @@ export const EXIT = { DONE: 0, BLOCKED: 1, CONTINUE: 2, WATCHDOG_EXHAUSTED: 75 }
 
 const DEFAULT_CFG = {
   stop_words: ['стоп', 'остановись', 'хватит', 'stop', 'cancel'],
-  plan_phrases: ['сделаю позже', 'дальше можно', 'план:', 'потом сделаю', 'на этом всё', 'пока всё'],
-  done_phrases: ['готово', 'сделано', 'done', 'completed', 'цель достигнута', 'задача закрыта'],
+  plan_phrases: ['сделаю позже', 'дальше можно', 'потом сделаю', 'на этом всё', 'пока всё'],
+  done_phrases: ['цель достигнута', 'задача закрыта'],
   external_deny: ['DENIED', 'HUMAN CHECK', 'EACCES'],
+  on_unjustified: 'continue',
   max_loops: 256,
   max_restarts: 3,
-  heartbeat_stale_ms: 90000,
+  heartbeat_stale_ms: 300000,
   hmac_env: 'LOOP_GUARD_HMAC',
   restart_command: null,
   restart_args: [],
 };
+
+export function unjustifiedAction(cfg = DEFAULT_CFG) {
+  return String(cfg.on_unjustified || 'continue').toLowerCase() === 'restart' ? 'RESTART' : 'CONTINUE';
+}
+
+export function hadToolWork(state = {}, event = {}) {
+  const receipts = event.receipts || [];
+  return Boolean(
+    event.stateChanged ||
+    state.state_changed ||
+    (state.receipts_this_turn || 0) > 0 ||
+    receipts.length > 0,
+  );
+}
 
 function loadJson(file, fallback) {
   try {
@@ -138,7 +153,8 @@ function hasUnrecoveredError(receipts) {
 export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
   const now = event.now || Date.now();
   const receipts = event.receipts || [];
-  const staleMs = cfg.heartbeat_stale_ms ?? 90000;
+  const staleMs = cfg.heartbeat_stale_ms ?? 300000;
+  const soft = unjustifiedAction(cfg);
 
   if (isUserStop(event.userText, cfg)) {
     return { justified: true, reason: 'user_stop', action: 'STOP', verdict: 'DONE' };
@@ -154,28 +170,34 @@ export function classifyStop(state, event = {}, cfg = DEFAULT_CFG) {
   }
 
   if (state.verdict === 'DONE' && !goalVerified(state)) {
-    return { justified: false, reason: 'stale_done', action: 'RESTART', verdict: 'CONTINUE' };
+    return { justified: false, reason: 'stale_done', action: soft, verdict: 'CONTINUE' };
   }
   if (event.processAlive === false && !goalVerified(state)) {
     return { justified: false, reason: 'process_died', action: 'RESTART', verdict: 'CONTINUE' };
   }
   if (event.type === 'process-check' && heartbeatStale(state, now, staleMs) && !goalVerified(state)) {
-    return { justified: false, reason: 'stale_heartbeat', action: 'RESTART', verdict: 'CONTINUE' };
+    if (event.processAlive === false) {
+      return { justified: false, reason: 'process_died', action: 'RESTART', verdict: 'CONTINUE' };
+    }
+    return { justified: false, reason: 'stale_heartbeat', action: soft, verdict: 'CONTINUE' };
   }
   if (isPlanLanguage(event.assistantText, cfg)) {
-    return { justified: false, reason: 'plan_language', action: 'RESTART', verdict: 'CONTINUE' };
+    return { justified: false, reason: 'plan_language', action: soft, verdict: 'CONTINUE' };
   }
-  if (isDoneClaim(event.assistantText, cfg) && receipts.length === 0 && (state.receipts_this_turn || 0) === 0) {
-    return { justified: false, reason: 'done_without_evidence', action: 'RESTART', verdict: 'CONTINUE' };
+  if (isDoneClaim(event.assistantText, cfg) && receipts.length === 0 && (state.receipts_this_turn || 0) === 0 && !hadToolWork(state, event)) {
+    return { justified: false, reason: 'done_without_evidence', action: soft, verdict: 'CONTINUE' };
   }
   if (isDoneClaim(event.assistantText, cfg) && hasUnrecoveredError(receipts)) {
-    return { justified: false, reason: 'lie_about_tools', action: 'RESTART', verdict: 'CONTINUE' };
+    return { justified: false, reason: 'lie_about_tools', action: soft, verdict: 'CONTINUE' };
   }
   if (isDoneClaim(event.assistantText, cfg) && event.stateChanged === false && !state.state_changed) {
-    return { justified: false, reason: 'no_state_change', action: 'RESTART', verdict: 'CONTINUE' };
+    if (hadToolWork(state, event)) {
+      return { justified: false, reason: 'in_progress', action: 'CONTINUE', verdict: 'CONTINUE' };
+    }
+    return { justified: false, reason: 'no_state_change', action: soft, verdict: 'CONTINUE' };
   }
   if (event.type === 'stop-attempt' && !goalVerified(state)) {
-    return { justified: false, reason: 'no_reason', action: 'RESTART', verdict: 'CONTINUE' };
+    return { justified: false, reason: 'no_reason', action: soft, verdict: 'CONTINUE' };
   }
 
   return { justified: false, reason: 'in_progress', action: 'CONTINUE', verdict: 'CONTINUE' };
@@ -190,10 +212,11 @@ export function applyClassification(state, cls, cfg = DEFAULT_CFG) {
     next.last_unjustified = null;
     return next;
   }
-  if (cls.action === 'CONTINUE' && cls.reason === 'in_progress') {
+  if (cls.action === 'CONTINUE') {
     next.verdict = 'CONTINUE';
     next.reason = cls.reason;
     next.stop_reason = null;
+    if (cls.reason && cls.reason !== 'in_progress') next.last_unjustified = cls.reason;
     return next;
   }
   const maxR = next.max_restarts ?? cfg.max_restarts ?? 3;
@@ -680,26 +703,32 @@ function selftest() {
   s.done_when = ['qr'];
   c = classifyStop(s, { type: 'stop-attempt', assistantText: '' }, cfg);
   const a1 = applyClassification(s, c, cfg);
-  pass &= ok('внезапная остановка -> RESTART', !c.justified && c.reason === 'no_reason' && a1.verdict === 'CONTINUE' && a1.restarts === 1);
+  pass &= ok('внезапная остановка -> CONTINUE', !c.justified && c.reason === 'no_reason' && c.action === 'CONTINUE' && a1.verdict === 'CONTINUE' && (a1.restarts || 0) === 0);
 
-  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'готово' }, cfg);
-  pass &= ok('готово без доказательств -> UNJUSTIFIED', !c.justified && c.reason === 'done_without_evidence');
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'готово, смотри отчёт' }, cfg);
+  pass &= ok('обычное готово не стоп', c.action === 'CONTINUE' && c.reason !== 'done_without_evidence');
+
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'цель достигнута' }, cfg);
+  pass &= ok('цель достигнута без доказательств -> CONTINUE', !c.justified && c.reason === 'done_without_evidence' && c.action === 'CONTINUE');
 
   c = classifyStop(s, { type: 'stop-attempt', userText: 'стоп' }, cfg);
   pass &= ok('стоп пользователя не рестартит', c.justified && c.reason === 'user_stop');
 
   s.last_heartbeat = new Date(Date.now() - 5000).toISOString();
   c = classifyStop(s, { type: 'process-check', processAlive: true, now: Date.now() }, cfg);
-  pass &= ok('heartbeat протух -> RESTART', !c.justified && c.reason === 'stale_heartbeat');
+  pass &= ok('heartbeat протух у живого -> CONTINUE', !c.justified && c.reason === 'stale_heartbeat' && c.action === 'CONTINUE');
+
+  c = classifyStop(s, { type: 'process-check', processAlive: false, now: Date.now() }, cfg);
+  pass &= ok('процесс умер -> RESTART', !c.justified && c.reason === 'process_died' && c.action === 'RESTART');
 
   const bad = [makeReceipt('pay', '', 'ECONNREFUSED', cfg)];
-  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'Done — deployed successfully', receipts: bad }, cfg);
-  pass &= ok('ложь про инструмент -> UNJUSTIFIED', !c.justified && c.reason === 'lie_about_tools');
+  c = classifyStop(s, { type: 'stop-attempt', assistantText: 'цель достигнута', receipts: bad }, cfg);
+  pass &= ok('ложь про инструмент -> CONTINUE', !c.justified && c.reason === 'lie_about_tools' && c.action === 'CONTINUE');
 
   let lim = emptyState(cfg);
   lim.done_when = ['x'];
   lim.restarts = 3;
-  c = classifyStop(lim, { type: 'stop-attempt' }, cfg);
+  c = classifyStop(lim, { type: 'process-check', processAlive: false }, cfg);
   const a2 = applyClassification(lim, c, cfg);
   pass &= ok('лимит рестартов -> BLOCKED', a2.verdict === 'BLOCKED' && a2.reason === 'restart limit');
 
@@ -708,10 +737,17 @@ function selftest() {
   stale.reason = 'old goal';
   stale.done_when = ['z'];
   c = classifyStop(stale, { type: 'tick' }, cfg);
-  pass &= ok('старый DONE без критериев -> RESTART', !c.justified && c.reason === 'stale_done');
+  pass &= ok('старый DONE без критериев -> CONTINUE', !c.justified && c.reason === 'stale_done' && c.action === 'CONTINUE');
 
   pass &= ok('DENIED обоснован', classifyStop(s, { observation: 'DENIED cwd=...' }, cfg).reason === 'external_deny');
-  pass &= ok('план-язык -> UNJUSTIFIED', classifyStop(s, { assistantText: 'план: сделаю позже' }, cfg).reason === 'plan_language');
+  pass &= ok('заголовок план: не стоп', classifyStop(s, { assistantText: 'план: открою файл и поправлю тест' }, cfg).reason !== 'plan_language');
+  pass &= ok('сделаю позже -> CONTINUE', classifyStop(s, { assistantText: 'сделаю позже' }, cfg).reason === 'plan_language' && classifyStop(s, { assistantText: 'сделаю позже' }, cfg).action === 'CONTINUE');
+
+  const withTool = emptyState(cfg);
+  withTool.receipts_this_turn = 1;
+  withTool.state_changed = true;
+  c = classifyStop(withTool, { type: 'stop-attempt', assistantText: 'цель достигнута', stateChanged: true, receipts: [makeReceipt('write', 'ok', null, cfg)] }, cfg);
+  pass &= ok('ход с инструментом не no_state_change', c.reason !== 'no_state_change');
 
   const rec = makeReceipt('curl', 'HEALTH ok', null, cfg);
   const v1 = verifyReceipt(rec, cfg);

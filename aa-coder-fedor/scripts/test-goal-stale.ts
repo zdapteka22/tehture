@@ -122,18 +122,27 @@ const classified = run(
   ["classify", "--type=stop-attempt", "--assistant=готово", "--user=новая задача: оплата картой", `--dir=${hookAgent}`],
   hookTmp,
 );
-ok("stop-attempt restarts", /ACTION=RESTART|VERDICT=CONTINUE/.test(classified.stdout || ""));
-ok("stop-attempt writes ticket or resume", existsSync(path.join(hookAgent, "restart.ticket.json")) || existsSync(path.join(hookAgent, "resume.nudge.json")));
+ok("stop-attempt keeps going", /ACTION=CONTINUE|VERDICT=CONTINUE|НЕ ОСТАНАВЛИВАТЬСЯ/.test(classified.stdout || ""));
+ok(
+  "stop-attempt does not restart process",
+  !existsSync(path.join(hookAgent, "restart.ticket.json")) && !existsSync(path.join(hookAgent, "resume.nudge.json")),
+);
 rmSync(hookTmp, { recursive: true, force: true });
 
 const cfg = readFileSync(path.resolve(ROOT, "..", ".agent", "loop-guard.json"), "utf8");
 ok("config restart is auto", /"restart_command": "auto"/.test(cfg));
+ok("config unjustified is continue", /"on_unjustified": "continue"/.test(cfg));
+ok("config heartbeat is 5 min", /"heartbeat_stale_ms": 300000/.test(cfg));
+ok("config done phrases are strict", /"цель достигнута"/.test(cfg) && /"задача закрыта"/.test(cfg) && !/"done_phrases": \[[^\]]*"готово"/.test(cfg));
+ok("config plan phrases drop heading", /"plan_phrases": \[[^\]]*"сделаю позже"/.test(cfg) && !/"plan_phrases": \[[^\]]*"план:"/.test(cfg));
 ok("resume-goal exists", existsSync(path.resolve(ROOT, "..", ".agent", "resume-goal.mjs")));
 const hook = readFileSync(path.join(ROOT, "lib", "loop-guard-hook.ts"), "utf8");
 ok("hook begin on user", hook.includes("begin") && hook.includes("noteGuardUser"));
 ok("hook classify on stop", hook.includes("stop-attempt") && hook.includes("decideGuardStop"));
+ok("hook classify without detach", !hook.includes("--detach"));
 const crew = readFileSync(path.join(ROOT, "lib", "crew", "run.ts"), "utf8");
 ok("crew calls guard on empty tools", crew.includes("decideGuardStop") && crew.includes("noteGuardTool"));
+ok("crew hod hides classifier", !crew.includes("Гвард:") && crew.includes("Цель не закрыта — делаю следующий шаг."));
 const handle = readFileSync(path.join(ROOT, "lib", "fyodor", "handle.ts"), "utf8");
 ok("handle begins guard goal", handle.includes("noteGuardUser"));
 const start = readFileSync(path.join(ROOT, "scripts", "start-grok-coder.ps1"), "utf8");
