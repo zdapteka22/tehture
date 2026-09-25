@@ -201,38 +201,63 @@ def patch_guard_cycle_chunk(data: bytes) -> bytes:
         'note:"Цель не закрыта — продолжаю, без остановки на плане."});continue}'
         '/*FEDOR_GUARD_CYCLE*/if(a.tools&&a.userGoal){try{var _fs2=require("fs"),_p2=require("path"),_cp2=require("child_process"),'
         '_gd2=_p2.join(process.env.GROK_WORKSPACE||process.cwd(),".agent"),_gb2=_p2.join(_gd2,"loop-guard.mjs");'
-        'if(_fs2.existsSync(_gb2)){var _out=_cp2.spawnSync(process.execPath,[_gb2,"classify","--type=stop-attempt",'
-        '"--assistant="+String(h||"").slice(0,400),"--user="+String(a.userGoal||"").slice(0,400),"--detach","--dir="+_gd2],'
-        '{encoding:"utf8",timeout:8e3,windowsHide:!0,env:Object.assign({},process.env,{LOOP_GUARD_NO_LAUNCH:"1"})});'
-        'var _txt=String((_out.stdout||"")+(_out.stderr||""));'
+        'if(_fs2.existsSync(_gb2)){_cp2.spawnSync(process.execPath,[_gb2,"classify","--type=stop-attempt",'
+        '"--assistant="+String(h||"").slice(0,400),"--user="+String(a.userGoal||"").slice(0,400),"--dir="+_gd2],'
+        '{encoding:"utf8",timeout:8e3,windowsHide:!0,env:Object.assign({},process.env,{LOOP_GUARD_NO_LAUNCH:"1"})})}}'
+        'catch(_z2){}}'
+        'break}'
+    )
+    old_cycle_continue = (
         'if(/VERDICT=CONTINUE|ACTION=RESTART|НЕ ОСТАНАВЛИВАТЬСЯ/.test(_txt)||_out.status===2){'
         'k+=1,c.push({role:"assistant",content:b||""}),c.push({role:"user",content:b_}),'
         'a.send("crew",{role:a.streamThought||"coder",label:bF[a.streamThought||"coder"],status:"running",'
         'note:"Цель не закрыта — делаю следующий шаг."});continue}}}'
-        'catch(_z2){}}'
-        'break}'
     )
+    if old_cycle_continue in text:
+        text = text.replace(old_cycle_continue, '}}', 1)
     if stop_old in text:
         text = text.replace(stop_old, stop_new, 1)
     return text.encode("utf-8")
 
 
+STOP_WHEN_DONE = (
+    "/*FEDOR_KEEP_GOING*//*FEDOR_STOP_WHEN_DONE*/"
+    "if(bz(a.content)||(0,bE.e5)(a.content)||(0,bE.dE)(a.content)||(0,bE.GC)(a.content)||b6(a.content))return!0;"
+    "var _wrote=a.usedTools.some(t=>/^(write_file|write_pc_file|search_replace)$/.test(String(t||\"\")))||(a.changedPaths||[]).some(p=>String(p||\"\").trim());"
+    "var _opened=a.usedTools.some(t=>/^(open_on_pc|launch_app|operator_use|browser_navigate)$/.test(String(t||\"\")));"
+    "var _live=(0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)||a.usedTools.some(t=>b4.test(String(t||\"\")))||b7(a.userText);"
+    "if((0,bE.BP)(a.userText)&&!_wrote)return!0;"
+    "if(_live){var d=String(a.userText||\"\"),e=String(a.content||\"\");"
+    "var _ok=!!e.trim()&&!bz(e)&&!(0,bE.e5)(e)&&!(0,bE.dE)(e)&&!(0,bE.GC)(e)&&!b6(e)"
+    "&&!/(не сработал|не открыл|пришлите|что видно|жду вас)/i.test(e)"
+    "&&(/(сообществ|групп|паблик|\\bвк\\b)/i.test(d)&&b7(d)"
+    "?/[\"']?group_id[\"']?\\s*[:=]\\s*\\d+|vk\\.(com|ru)\\/(club|public)\\d+|сообщество создано/i.test(e)"
+    ":/(токен|oauth|access_token)/i.test(d)&&!/(сообществ|групп)/i.test(d)"
+    "?/access_token:|TOKEN_READY|vk1\\.a\\./i.test(e)"
+    ":/(сохранил|отправил|создано\\b|файл записан|вошёл|вошел|зарегистрирован|опубликован)/i.test(e));"
+    "if(_ok)return!1;if((0,bE.KW)(a.userText)&&!b7(a.userText)&&_opened)return!1;return!0;}"
+    "if((0,bE.O2)(a.userText)&&_wrote)return!1;"
+)
+
+NEVER_STOP = (
+    "/*FEDOR_KEEP_GOING*//*FEDOR_NEVER_STOP_ON_GOAL*/"
+    "if((0,bE.O2)(a.userText)||(0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)"
+    "||a.usedTools.some(t=>b4.test(String(t||\"\"))))return!0;"
+)
+
+
 def patch_keep_going_chunk(data: bytes) -> bytes:
-    """Packed Next runs this chunk, not the TS sources. Keep 1-2 moves from ending a live job."""
+    """Packed Next runs this chunk, not the TS sources. Stop when the job is actually done."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
-    if "FEDOR_NEVER_STOP_ON_GOAL" in text:
-        return text.encode("utf-8") if isinstance(text, str) else data
+    if "FEDOR_STOP_WHEN_DONE" in text:
+        return text.encode("utf-8")
+    if NEVER_STOP in text:
+        return text.replace(NEVER_STOP, STOP_WHEN_DONE, 1).encode("utf-8")
     if "FEDOR_KEEP_GOING" in text:
-        text = text.replace(
-            "/*FEDOR_KEEP_GOING*/",
-            "/*FEDOR_KEEP_GOING*//*FEDOR_NEVER_STOP_ON_GOAL*/"
-            "if((0,bE.O2)(a.userText)||(0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)"
-            "||a.usedTools.some(t=>b4.test(String(t||\"\"))))return!0;",
-            1,
-        )
+        text = text.replace("/*FEDOR_KEEP_GOING*/", STOP_WHEN_DONE, 1)
         return text.encode("utf-8")
     start = text.find(
         'if((0,bE.cP)(a.userText)||(0,bE.tq)(a.userText)||(0,bE.ZI)(a.userText)||a.usedTools.some(a=>b4.test(String(a||"")))){let d,e;return'
