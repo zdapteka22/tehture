@@ -137,6 +137,9 @@ INJECT = {
     "lib/click-outcome.ts": ROOT / "lib" / "click-outcome.ts",
     "lib/browser.ts": ROOT / "lib" / "browser.ts",
     "lib/tools.ts": ROOT / "lib" / "tools.ts",
+    "lib/web-files.cjs": ROOT / "lib" / "web-files.cjs",
+    "lib/web-files.ts": ROOT / "lib" / "web-files.ts",
+    "lib/web-public.ts": ROOT / "lib" / "web-public.ts",
     "lib/reflexion.ts": ROOT / "lib" / "reflexion.ts",
     "coder-v2/src/hub.cjs": ROOT / "coder-v2" / "src" / "hub.cjs",
     "lib/commerce/plans.ts": ROOT / "lib" / "commerce" / "plans.ts",
@@ -619,7 +622,8 @@ def patch_hang_work_chunk(data: bytes) -> bytes:
     new_hang = (
         "continue\\b|завис|зависа|опять встал|не процес|"
         "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again|"
-        "остановк|без конца|вечно останав|(?:^|\\b)(и|ну|давай|дальше)(?:$|\\b))/i;"
+        "остановк|без конца|вечно останав|скача|загрузи|download\\b|"
+        "(?:^|\\b)(и|ну|давай|дальше)(?:$|\\b))/i;"
         "/*FEDOR_HANG_WORK*//*FEDOR_HANG_WORK2*/"
     )
     if old_hang in text:
@@ -634,7 +638,8 @@ def patch_hang_work_chunk(data: bytes) -> bytes:
         "не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|"
         "finish (it|this)|keep going|continue\\b|завис|зависа|опять встал|не процес|"
         "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again|"
-        "остановк|без конца|вечно останав)/i;/*FEDOR_HANG_WORK*//*FEDOR_HANG_WORK2*/"
+        "остановк|без конца|вечно останав|скача|загрузи|download\\b)/i;"
+        "/*FEDOR_HANG_WORK*//*FEDOR_HANG_WORK2*/"
     )
     if old_o in text:
         text = text.replace(old_o, new_o, 1)
@@ -653,6 +658,101 @@ def patch_hang_work_chunk(data: bytes) -> bytes:
     return text.encode("utf-8")
 
 
+def patch_web_files_chunk(data: bytes) -> bytes:
+    """Add web_search / download_file / inspect_apk to the packed tool loop."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_WEB_FILES" in text:
+        return data
+    helper = (
+        "function _fedorWf(){var p=require(\"path\"),fs=require(\"fs\"),"
+        "roots=[process.env.FEDOR_APP_ROOT,process.env.GROK_WORKSPACE,"
+        "process.env.FEDOR_WORKSPACE,process.cwd()];"
+        "for(var i=0;i<roots.length;i++){if(!roots[i])continue;"
+        "var f=p.join(roots[i],\"lib\",\"web-files.cjs\");"
+        "if(fs.existsSync(f))return require(f)}"
+        "throw new Error(\"web-files.cjs missing\")}"
+    )
+    tools = (
+        ',{type:"function",function:{name:"web_search",description:'
+        '"Search the public web (DuckDuckGo HTML/lite). First tool for find/download file. '
+        'Do not start with the origin API.",parameters:{type:"object",properties:'
+        '{query:{type:"string"},maxResults:{type:"number"}},required:["query"]}}}'
+        ',{type:"function",function:{name:"download_file",description:'
+        '"Stream a public http(s) file to disk. consent=true required for .exe/.msi/.bat.",'
+        'parameters:{type:"object",properties:{url:{type:"string"},path:{type:"string"},'
+        'maxBytes:{type:"number"},consent:{type:"boolean"}},required:["url"]}}}'
+        ',{type:"function",function:{name:"inspect_apk",description:'
+        '"Read APK package/version/assets.",parameters:{type:"object",properties:'
+        '{path:{type:"string"}},required:["path"]}}}'
+        ',{type:"function",function:{name:"inspect_zip",description:'
+        '"List ZIP/APK entries.",parameters:{type:"object",properties:'
+        '{path:{type:"string"}},required:["path"]}}}'
+    )
+    old_end = 'required:["url"]}}}];async function bB'
+    new_end = 'required:["url"]}}}' + tools + "];/*FEDOR_WEB_FILES*/" + helper + "async function bB"
+    if old_end in text:
+        text = text.replace(old_end, new_end, 1)
+    old_case = 'case"web_fetch":return{output:await bu(String(b.url??""))};'
+    new_case = (
+        'case"web_fetch":return{output:await bu(String(b.url??""))};'
+        'case"web_search":return{output:await _fedorWf().webSearch(String(b.query??""),Number(b.maxResults)||10)};'
+        'case"download_file":{let o=await _fedorWf().downloadFile({url:String(b.url??""),'
+        'path:b.path?String(b.path):"",maxBytes:b.maxBytes,consent:!(!b.consent&&!b.allowExec)});'
+        'let q;try{q=JSON.parse(o)}catch(e){q={}}return{output:o,changedPaths:q.ok&&q.path?[q.path]:void 0}}'
+        'case"inspect_apk":return{output:_fedorWf().inspectApk(String(b.path??""))};'
+        'case"inspect_zip":return{output:_fedorWf().inspectZip(String(b.path??""))};'
+    )
+    if old_case in text:
+        text = text.replace(old_case, new_case, 1)
+    text = text.replace(
+        '"web_fetch","project_harness"]',
+        '"web_fetch","web_search","download_file","inspect_apk","inspect_zip","project_harness"]',
+        1,
+    )
+    text = text.replace(
+        '"web_fetch","fs.read"',
+        '"web_fetch","web_search","fs.read"',
+        1,
+    )
+    old_prompt = (
+        "- NEVER solve captchas. If HUMAN CHECK appears, stop and ask the user "
+        "to complete it in the open window.\n</access>\n"
+    )
+    new_prompt = (
+        "- NEVER solve captchas. If HUMAN CHECK appears, stop and ask the user "
+        "to complete it in the open window.\n</access>\n\n"
+        "<web_files>\n"
+        "- Задача «найди/скачай файл» → web_search ПЕРВЫМ, не web_fetch на первоисточник.\n"
+        "- Первоисточник не отдаёт файл (RuStore, Google Play, стриминг) → сразу зеркала.\n"
+        "- API вернул 400/404 → это не тупик, максимум 2 попытки, потом поисковик.\n"
+        "- У приложения может быть 2+ package name — искать по всем.\n"
+        "- Скачал файл → inspect_apk / inspect_zip, показать факты (версия, размер, содержимое).\n"
+        "- Не качать .exe/.msi/.bat без согласия пользователя.\n"
+        "- APK: apkpure / apkmirror / apkcombo / uptodown / "
+        "https://d.apkpure.com/b/APK/<package>?version=latest\n"
+        "</web_files>\n"
+    )
+    if old_prompt in text:
+        text = text.replace(old_prompt, new_prompt, 1)
+    old_tool = (
+        "- web_fetch({ url }) for a public http(s) page (no login). "
+        "Use it to read docs; do not use it to reach private APIs.\n"
+    )
+    new_tool = (
+        "- web_search({ query }) first when the user wants a file from the internet. "
+        "Then download_file({ url, path }). Then inspect_apk / inspect_zip.\n"
+        "- web_fetch({ url }) for a public http(s) page (no login). "
+        "Use it to read docs; do not use it to reach private APIs. "
+        "Do not hammer a 400/404 origin API.\n"
+    )
+    if old_tool in text:
+        text = text.replace(old_tool, new_tool, 1)
+    return text.encode("utf-8")
+
+
 def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/185.js"):
@@ -662,6 +762,7 @@ def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
         data = patch_guard_cycle_chunk(data)
         data = patch_click_chunk(data)
         data = patch_harness_chunk(data)
+        data = patch_web_files_chunk(data)
     if norm.endswith("server/chunks/432.js"):
         data = patch_heavy_read_chunk(data)
     if norm.endswith("server/app/api/chat/route.js"):

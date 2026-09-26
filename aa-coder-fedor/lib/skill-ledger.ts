@@ -161,7 +161,8 @@ function insightKey(domain: SkillDomain, text: string): string {
 
 export function domainOfTool(name: string): SkillDomain {
   const tool = String(name || "");
-  if (/^(browser_|click_kit|web_fetch)/.test(tool)) return "browser";
+  if (/^(browser_|click_kit|web_fetch|web_search)/.test(tool)) return "browser";
+  if (/^(download_file|inspect_apk|inspect_zip)/.test(tool)) return "pc";
   if (/^(pc_|operator_use|launch_app|open_on_pc)/.test(tool)) return "pc";
   if (/^(run_terminal_cmd|project_harness)/.test(tool)) return "shell";
   if (/^(write_file|search_replace|read_file|list_dir|grep|write_pc_file)/.test(tool)) return "code";

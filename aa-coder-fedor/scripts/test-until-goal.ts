@@ -168,6 +168,7 @@ ok(
   "ordinary chat still not hang",
   !looksLikeHangComplaint("что такое массив") && !taskNeedsWork("что такое массив"),
 );
+ok("скачай apk is work", taskNeedsWork("скачай APK приложения ru.asa.pdd.android.app"));
 
 const crew = readFileSync(path.join(process.cwd(), "lib/crew/run.ts"), "utf8");
 ok("crew asks guard", /decideGuardStop/.test(crew));
@@ -177,6 +178,7 @@ ok("crew writes receipts", /noteGuardTool/.test(crew));
 const prompt = readFileSync(path.join(process.cwd(), "lib/prompt.ts"), "utf8");
 ok("prompt forbids stop after one or two tools", /one or two tools/.test(prompt));
 ok("prompt keeps Super Memory", prompt.includes("getMemoryPromptBlock()"));
+ok("prompt has web_files", prompt.includes("<web_files>") && prompt.includes("web_search ПЕРВЫМ"));
 ok("prompt keeps click kit", /click_kit/.test(prompt));
 
 console.log("until-goal ok");

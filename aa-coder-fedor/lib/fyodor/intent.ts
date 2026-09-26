@@ -139,6 +139,14 @@ export function looksLikeKeepGoing(text: string): boolean {
   return FOLLOW_WORK_RE.test(String(text || "")) || looksLikeHangComplaint(text) || looksLikeShortNudge(text);
 }
 
+export function looksLikeDownloadWork(text: string): boolean {
+  const raw = String(text || "");
+  if (!raw.trim()) return false;
+  if (/(скача(й|ть)|загрузи|download\b|найди.{0,24}(apk|файл|архив|зеркал))/i.test(raw)) return true;
+  if (/\.apk\b/i.test(raw) && /(найди|достань|принеси|зеркало)/i.test(raw)) return true;
+  return false;
+}
+
 /** File / folder / program work that must not stop at a plan. */
 export function taskNeedsWork(text: string): boolean {
   const raw = String(text || "").trim();
@@ -155,6 +163,7 @@ export function taskNeedsWork(text: string): boolean {
     return true;
   }
   if (FOLLOW_WORK_RE.test(raw) || looksLikeHangComplaint(raw) || looksLikeShortNudge(raw)) return true;
+  if (looksLikeDownloadWork(raw)) return true;
   return false;
 }
 

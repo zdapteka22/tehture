@@ -46,6 +46,7 @@ import {
   saveMemoryFact,
 } from "./super-memory";
 import type { AgentMode, TodoItem } from "./types";
+import { downloadFile, inspectApk, inspectZip, webSearch } from "./web-files";
 import { fetchPublicPage } from "./web-public";
 import { clickKitStatusText, healClickKits, shouldHealClickKit } from "./click-kit";
 import { JobAbortedError, isAbortError } from "./run-control";
@@ -596,11 +597,69 @@ export const GROK_TOOLS = [
     function: {
       name: "web_fetch",
       description:
-        "GET a public http(s) page. No login, cookies, credentials, or private APIs. Use for docs and open pages. Not a browser — for a live window use browser_navigate.",
+        "GET a public http(s) page. No login, cookies, credentials, or private APIs. Use for docs and open pages. Not a browser — for a live window use browser_navigate. For «найди файл» use web_search first, not this on the origin API.",
       parameters: {
         type: "object",
         properties: { url: { type: "string" } },
         required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "web_search",
+      description:
+        "Search the public web (DuckDuckGo HTML/lite, no JS). First tool for «найди/скачай файл X». Returns top links. Do not start with the origin API (RuStore, Play, closed catalog).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          maxResults: { type: "number" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "download_file",
+      description:
+        "Stream a public http(s) file to disk (redirects, sha256, default 500MB cap). Never download .exe/.msi/.bat without consent=true. After an APK, call inspect_apk.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          path: { type: "string", description: "Destination file or folder. Default: Desktop." },
+          maxBytes: { type: "number" },
+          consent: { type: "boolean", description: "Required for .exe/.msi/.bat" },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "inspect_apk",
+      description: "Read an APK (ZIP): package, versionName, versionCode, assets/. Uses aapt2 if present.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "inspect_zip",
+      description: "List files inside a ZIP/APK without extracting.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
       },
     },
   },
@@ -618,6 +677,9 @@ export const READ_ONLY_TOOLS = new Set([
   "memory_recall",
   "memory_optimize",
   "web_fetch",
+  "web_search",
+  "inspect_apk",
+  "inspect_zip",
 ]);
 
 export type ToolResult = {
@@ -844,6 +906,28 @@ async function runExecuteTool(
       }
       case "web_fetch":
         return { output: await fetchPublicPage(String(args.url ?? "")) };
+      case "web_search":
+        return { output: await webSearch(String(args.query ?? ""), Number(args.maxResults) || 10) };
+      case "download_file": {
+        const output = await downloadFile({
+          url: String(args.url ?? ""),
+          path: args.path ? String(args.path) : "",
+          maxBytes: args.maxBytes,
+          consent: Boolean(args.consent || args.allowExec),
+        });
+        let changed: string[] | undefined;
+        try {
+          const parsed = JSON.parse(output) as { ok?: boolean; path?: string };
+          if (parsed.ok && parsed.path) changed = [parsed.path];
+        } catch {
+          changed = undefined;
+        }
+        return { output, changedPaths: changed };
+      }
+      case "inspect_apk":
+        return { output: inspectApk(String(args.path ?? "")) };
+      case "inspect_zip":
+        return { output: inspectZip(String(args.path ?? "")) };
       case "memory_optimize": {
         const snap = compactSuperMemory();
         const lines = [

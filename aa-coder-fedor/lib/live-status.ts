@@ -44,6 +44,10 @@ export function toolAction(tool: ToolCallEvent): string {
   if (tool.name === "pc_screenshot") return "снимает экран ПК";
   if (tool.name === "click_kit") return "подбирает набор клика";
   if (tool.name === "web_fetch") return "читает открытую страницу";
+  if (tool.name === "web_search") return "ищет файл в интернете";
+  if (tool.name === "download_file") return "скачивает файл";
+  if (tool.name === "inspect_apk") return "разбирает APK";
+  if (tool.name === "inspect_zip") return "смотрит архив";
   return clip(tool.name, 40) || "инструмент";
 }
 

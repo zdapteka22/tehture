@@ -12,12 +12,13 @@ import {
   looksLikeShortNudge,
   looksLikeStopCommand,
   looksLikeWrite,
+  looksLikeDownloadWork,
   looksUnfinished,
   taskNeedsWork,
 } from "./intent";
 
 export const GOAL_NUDGE =
-  "Стоп. Ты описал шаг словами вместо вызова инструмента. Один-два хода и слово «готово» — не конец. Несколько browser_* кликов — не конец, в браузере сам не останавливайся. Если клик упал ошибкой (not found / timeout) — click_kit(heal), потом browser_click снова. Если клик прошёл, а URL тот же или раскрылось меню — это аккордеон: не вызывай click_kit и не жми ту же кнопку, жми появившийся пункт или browser_press Enter. Сейчас вызови следующий инструмент: browser_snapshot / browser_click / browser_press / click_kit / browser_type / run_terminal_cmd / operator_use / pc_click. Если Observation это JSON error_code / Access denied API — это не DENIED системы: смени параметры и вызови снова в этом ходе. Если в снимке есть строка access_token: — это полный токен, копируй её целиком и сразу вызывай API. Не проси пользователя вставить токен и не спрашивай «что видно». Для сообщества ВК цель = group_id или vk.com/club… На Windows это cmd.exe, не bash.";
+  "Стоп. Ты описал шаг словами вместо вызова инструмента. Один-два хода и слово «готово» — не конец. Несколько browser_* кликов — не конец, в браузере сам не останавливайся. Если клик упал ошибкой (not found / timeout) — click_kit(heal), потом browser_click снова. Если клик прошёл, а URL тот же или раскрылось меню — это аккордеон: не вызывай click_kit и не жми ту же кнопку, жми появившийся пункт или browser_press Enter. Сейчас вызови следующий инструмент: browser_snapshot / browser_click / browser_press / click_kit / browser_type / run_terminal_cmd / operator_use / pc_click / web_search / download_file / inspect_apk. Если ищешь файл в интернете — web_search первым, не API первоисточника. 400/404 = не тот эндпоинт, максимум 2 попытки. Если Observation это JSON error_code / Access denied API — это не DENIED системы: смени параметры и вызови снова в этом ходе. Если в снимке есть строка access_token: — это полный токен, копируй её целиком и сразу вызывай API. Не проси пользователя вставить токен и не спрашивай «что видно». Для сообщества ВК цель = group_id или vk.com/club… На Windows это cmd.exe, не bash.";
 
 /**
  * Safety ceiling only — not a “job done” signal.
@@ -29,7 +30,7 @@ export const GOAL_KEEP_GOING = 10_000;
 export const MIN_WORK_MOVES = 3;
 
 const WORK_TOOLS =
-  /^(write_file|write_pc_file|search_replace|open_on_pc|launch_app|run_terminal_cmd|operator_use|pc_click|pc_type|pc_keys|pc_snapshot|pc_screenshot|pc_focus|browser_navigate|browser_click|browser_type|browser_press|browser_wait|browser_snapshot|browser_screenshot|click_kit|project_harness)$/;
+  /^(write_file|write_pc_file|search_replace|open_on_pc|launch_app|run_terminal_cmd|operator_use|pc_click|pc_type|pc_keys|pc_snapshot|pc_screenshot|pc_focus|browser_navigate|browser_click|browser_type|browser_press|browser_wait|browser_snapshot|browser_screenshot|click_kit|project_harness|download_file|inspect_apk|inspect_zip)$/;
 const OPEN_TOOLS = /^(open_on_pc|launch_app|operator_use|browser_navigate)$/;
 const WRITE_TOOLS = /^(write_file|write_pc_file|search_replace)$/;
 const OPERATE_TOOLS =
@@ -37,7 +38,7 @@ const OPERATE_TOOLS =
 const LIVE_SITE_TOOLS =
   /^(browser_|click_kit|operator_use|pc_click|pc_type|pc_keys|pc_screenshot|pc_focus)/;
 const LOOK_ONLY =
-  /^(read_file|list_dir|grep|browser_snapshot|browser_tabs|pc_windows|pc_snapshot|web_fetch|memory_recall)$/;
+  /^(read_file|list_dir|grep|browser_snapshot|browser_tabs|pc_windows|pc_snapshot|web_fetch|web_search|memory_recall)$/;
 
 function looksLikeRetryableApiError(text: string): boolean {
   return /error_code|error_msg|access denied(?! is)|invalid (token|scope|client)|one of the parameters specified was missing/i.test(
@@ -125,11 +126,14 @@ export function missingGoalWork(userText: string, usedTools: string[], changedPa
   const wantOpen = looksLikeOpen(userText);
   const wantWrite = looksLikeWrite(userText);
   const wantOperate = looksLikeOperate(userText);
+  const wantDownload = looksLikeDownloadWork(userText);
   const didOpen = usedTools.some((name) => OPEN_TOOLS.test(String(name || "")));
   const didWrite =
     usedTools.some((name) => WRITE_TOOLS.test(String(name || ""))) ||
     changedPaths.some((item) => String(item || "").trim());
   const didOperate = usedTools.some((name) => OPERATE_TOOLS.test(String(name || "")));
+  const didDownload = usedTools.some((name) => String(name || "") === "download_file") || didWrite;
+  if (wantDownload && !didDownload) return true;
   if (wantWrite && !didWrite) return true;
   if (wantOpen && !didOpen && !didOperate) return true;
   if (wantOperate) {

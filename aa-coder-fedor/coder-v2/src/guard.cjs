@@ -62,6 +62,10 @@ const KNOWN_TOOLS = [
   "memory_optimize",
   "project_harness",
   "web_fetch",
+  "web_search",
+  "download_file",
+  "inspect_apk",
+  "inspect_zip",
 ];
 
 const ALIASES = {
