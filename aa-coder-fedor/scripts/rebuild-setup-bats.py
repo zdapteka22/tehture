@@ -633,7 +633,8 @@ def patch_hang_work_chunk(data: bytes) -> bytes:
         "let o=/(продолж|доделай|ещё раз|попробуй ещё|не останавливайся|не останавлиайся|"
         "не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|"
         "finish (it|this)|keep going|continue\\b|завис|зависа|опять встал|не процес|"
-        "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again)/i;/*FEDOR_HANG_WORK*/"
+        "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again|"
+        "остановк|без конца|вечно останав)/i;/*FEDOR_HANG_WORK*//*FEDOR_HANG_WORK2*/"
     )
     if old_o in text:
         text = text.replace(old_o, new_o, 1)
