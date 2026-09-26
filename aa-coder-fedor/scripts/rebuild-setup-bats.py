@@ -137,6 +137,8 @@ INJECT = {
     "lib/click-outcome.ts": ROOT / "lib" / "click-outcome.ts",
     "lib/browser.ts": ROOT / "lib" / "browser.ts",
     "lib/tools.ts": ROOT / "lib" / "tools.ts",
+    "lib/run-control.ts": ROOT / "lib" / "run-control.ts",
+    "lib/follow-up-loop.ts": ROOT / "lib" / "follow-up-loop.ts",
     "lib/web-files.cjs": ROOT / "lib" / "web-files.cjs",
     "lib/web-files.ts": ROOT / "lib" / "web-files.ts",
     "lib/web-public.ts": ROOT / "lib" / "web-public.ts",
@@ -795,7 +797,7 @@ def patch_keep_job_chunk(data: bytes) -> bytes:
     old = "function g(a){let b=f(a),c=e.get(b);c&&!c.signal.aborted&&c.abort();"
     new = (
         "function o(a){let b=f(a),c=e.get(b);return!!(c&&!c.signal.aborted)}"
-        "function g(a){let b=f(a),c=e.get(b);c&&!c.signal.aborted&&c.abort();"
+        "function g(a){let b=f(a),c=e.get(b);if(c&&!c.signal.aborted)return c;"
         "/*FEDOR_KEEP_JOB*/"
     )
     if old in text:
@@ -804,6 +806,11 @@ def patch_keep_job_chunk(data: bytes) -> bytes:
     new_exp = "c.d(b,{GY:()=>n,Lt:()=>k,Nc:()=>g,Te:()=>m,Xw:()=>d,Zn:()=>i,w$:()=>j,zf:()=>l,Q2:()=>o})"
     if old_exp in text:
         text = text.replace(old_exp, new_exp, 1)
+    text = text.replace(
+        "c&&!c.signal.aborted&&c.abort();/*FEDOR_KEEP_JOB*/",
+        "if(c&&!c.signal.aborted)return c;/*FEDOR_KEEP_JOB*/",
+        1,
+    )
     return text.encode("utf-8")
 
 
@@ -812,19 +819,35 @@ def patch_chat_keep_job(data: bytes) -> bytes:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
-    if "FEDOR_KEEP_JOB_CHAT" in text:
+    if "FEDOR_GROK_QUEUE" in text:
         return data
-    old = "),y=(0,m.Nc)(c.threadId),z=()=>(0,m.w$)(c.threadId,y);try{a.signal.addEventListener(\"abort\",z)}catch{}"
-    new = (
-        ");/*FEDOR_KEEP_JOB_CHAT*/"
-        "if((function(t){t=String(t||\"\").replace(/\\s+/g,\" \").trim().replace(/[.!?…]+$/g,\"\");"
-        "return /^(и+|ну+|да|и чё|и че|и что|ну что|опять стоишь|чини|давай)$/i.test(t)})(r?.content||\"\")"
+    grok_cond = (
+        "!(function(t){t=String(t||\"\").trim().toLowerCase().replace(/^[«\"']+|[»\"']+$/g,\"\")"
+        ".replace(/[.!?…]+$/g,\"\");"
+        "return /^(стоп+|stop+|halt|cancel|abort|остановись|хватит)$/i.test(t)})(r?.content||\"\")"
+    )
+    grok_if = (
+        f"if({grok_cond}"
         "&&(0,m.Q2)&&(0,m.Q2)(c.threadId))return new Response(new ReadableStream({start(b){"
-        "x(b,\"status\",{text:\"продолжаю текущий ход, не сбрасываю работу\"});"
+        "x(b,\"status\",{text:\"принял уточнение, не сбрасываю текущий ход\"});"
         "x(b,\"done\",{continued:!0,todos:[]});b.close()}}),"
         "{headers:{\"Content-Type\":\"text/event-stream; charset=utf-8\","
         "\"Cache-Control\":\"no-cache, no-transform\",Connection:\"keep-alive\"}});"
-        "y=(0,m.Nc)(c.threadId)"
+    )
+    if "FEDOR_KEEP_JOB_CHAT" in text:
+        text = text.replace(
+            "(function(t){t=String(t||\"\").replace(/\\s+/g,\" \").trim().replace(/[.!?…]+$/g,\"\");"
+            "return /^(и+|ну+|да|и чё|и че|и что|ну что|опять стоишь|чини|давай)$/i.test(t)})(r?.content||\"\")",
+            grok_cond,
+            1,
+        )
+        text = text.replace("/*FEDOR_KEEP_JOB_CHAT*/", "/*FEDOR_KEEP_JOB_CHAT*//*FEDOR_GROK_QUEUE*/", 1)
+        return text.encode("utf-8")
+    old = "),y=(0,m.Nc)(c.threadId),z=()=>(0,m.w$)(c.threadId,y);try{a.signal.addEventListener(\"abort\",z)}catch{}"
+    new = (
+        ");/*FEDOR_KEEP_JOB_CHAT*//*FEDOR_GROK_QUEUE*/"
+        + grok_if
+        + "y=(0,m.Nc)(c.threadId)"
     )
     if old in text:
         text = text.replace(old, new, 1)

@@ -10,7 +10,8 @@ import type { ProviderId, TodoItem } from "../types";
 import { CREW_LABELS, type CrewRole } from "./roles";
 import { GOAL_KEEP_GOING, GOAL_NUDGE, shouldNudgeUntilGoal } from "../fyodor/until-goal";
 import { decideGuardStop, noteGuardAssistant, noteGuardTool } from "../loop-guard-hook";
-import { isAbortError, throwIfAborted } from "../run-control";
+import { drainInterjections, isAbortError, throwIfAborted } from "../run-control";
+import { formatDrainedInterjections } from "../follow-up-loop";
 
 export type CrewSend = (event: string, data: unknown) => void;
 
@@ -44,6 +45,8 @@ export async function runToolAgent(options: {
   streamThought?: CrewRole;
   /** Original user task. When set, a plan-only reply does not end the loop. */
   userGoal?: string;
+  /** Chat thread — queued follow-ups drain into this turn. */
+  jobId?: string;
   maxNudges?: number;
   signal?: AbortSignal | null;
 }): Promise<ToolLoopResult> {
@@ -110,8 +113,25 @@ export async function runToolAgent(options: {
     }
   };
 
+  const absorbFollowUp = (assistantText?: string): boolean => {
+    const pending = drainInterjections(options.jobId);
+    const block = formatDrainedInterjections(pending);
+    if (!block) return false;
+    if (assistantText != null) messages.push({ role: "assistant", content: assistantText });
+    messages.push({ role: "user", content: block });
+    options.send("status", { text: "принял уточнение, ход не сбрасываю" });
+    options.send("crew", {
+      role: options.streamThought || "coder",
+      label: CREW_LABELS[options.streamThought || "coder"],
+      status: "running",
+      note: "Уточнение в очередь — продолжаю тот же ход.",
+    });
+    return true;
+  };
+
   for (let turn = 0; turn < turnLimit; turn += 1) {
     throwIfAborted(options.signal);
+    absorbFollowUp();
     collapseOldObservations(messages as Array<{ role?: string; content?: unknown }>);
     content = "";
     let text = "";
@@ -161,6 +181,9 @@ export async function runToolAgent(options: {
         });
       const guard = workLoop ? decideGuardStop(content, options.userGoal || "") : { keepGoing: false };
       const stopDone = guard.verdict === "DONE" || guard.reason === "user_stop" || guard.reason === "goal_verified";
+      if (absorbFollowUp(text || "")) {
+        continue;
+      }
       if (!stopDone && needNudge && nudges < maxNudges) {
         nudges += 1;
         messages.push({ role: "assistant", content: text || "" });

@@ -331,6 +331,7 @@ async function handleFyodorInner(request: FyodorHandleRequest): Promise<FyodorHa
       light: true,
       signal: request.signal,
       role: request.role,
+      jobId,
     });
     await finishVisiblePcWork(request.userText, crew.changedPaths || [], send);
     return {
@@ -577,20 +578,21 @@ async function planGraph(
   if (!request.settings) return null;
   try {
     const messages = buildRoleMessages({ role: "planner", node: null, userText: goal.text, goal });
-    const result = await runToolAgent({
-      settings: request.settings,
-      messages,
-      tools: grokToolsFor("planner"),
-      temperature: 0.1,
-      maxTurns: 2,
-      streamText: false,
-      send: request.send || (() => undefined),
-      rebuildSystem: async () => messages[0].content,
-      fallback: request.fallback,
-      todos: [],
-      usedTools: [],
-      signal: request.signal,
-    });
+      const result = await runToolAgent({
+        settings: request.settings,
+        messages,
+        tools: grokToolsFor("planner"),
+        temperature: 0.1,
+        maxTurns: 2,
+        streamText: false,
+        send: request.send || (() => undefined),
+        rebuildSystem: async () => messages[0].content,
+        fallback: request.fallback,
+        todos: [],
+        usedTools: [],
+        signal: request.signal,
+        jobId: request.jobId,
+      });
     const parsed = parsePlannerGraph(result.content, maxLoops);
     if (!parsed) return fallback;
     validateGraph(parsed, "L2");
@@ -674,6 +676,7 @@ async function runCodedNode(opts: {
         usedTools: [],
         userGoal: goal.text,
         signal: request.signal,
+        jobId: request.jobId,
       });
       void attempt;
       return {

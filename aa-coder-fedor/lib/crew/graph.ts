@@ -44,6 +44,7 @@ export type CrewRequest = {
   light?: boolean;
   signal?: AbortSignal | null;
   role?: AppRole;
+  jobId?: string;
 };
 
 export type CrewOutcome = {
@@ -92,7 +93,11 @@ export async function runCrewGraph(request: CrewRequest): Promise<CrewOutcome> {
   const { send } = request;
   throwIfAborted(request.signal);
   const go = (opts: Parameters<typeof runToolAgent>[0]) =>
-    runToolAgent({ ...opts, signal: request.signal ?? opts.signal });
+    runToolAgent({
+      ...opts,
+      signal: request.signal ?? opts.signal,
+      jobId: request.jobId ?? opts.jobId,
+    });
   const light = Boolean(request.light);
   const turnCap = Math.max(GOAL_KEEP_GOING, request.maxTurns ?? GOAL_KEEP_GOING);
   const brief = droppedHistoryBrief(request.history);

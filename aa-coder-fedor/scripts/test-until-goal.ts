@@ -194,6 +194,7 @@ const crew = readFileSync(path.join(process.cwd(), "lib/crew/run.ts"), "utf8");
 ok("crew asks guard", /decideGuardStop/.test(crew));
 ok("crew stops when work is done", /stopDone/.test(crew) && /needNudge/.test(crew));
 ok("crew writes receipts", /noteGuardTool/.test(crew));
+ok("crew drains follow-ups", /drainInterjections/.test(crew) && /absorbFollowUp/.test(crew));
 
 const prompt = readFileSync(path.join(process.cwd(), "lib/prompt.ts"), "utf8");
 ok("prompt forbids stop after one or two tools", /one or two tools/.test(prompt));

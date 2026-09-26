@@ -28,6 +28,7 @@
     "test:stop": "npx tsx scripts/test-stop-loop.ts",
     "test:goal-stale": "npx tsx scripts/test-goal-stale.ts",
     "test:until-goal": "npx tsx scripts/test-until-goal.ts",
+    "test:follow-up-loop": "npx tsx scripts/test-follow-up-loop.ts",
     "test:web-files": "npx tsx scripts/test-web-files.ts",
     "test:free-sku": "npx tsx scripts/test-free-sku.ts",
     "test:windows-keep-going": "python3 scripts/test-windows-keep-going.py",

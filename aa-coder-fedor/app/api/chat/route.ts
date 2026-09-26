@@ -8,8 +8,9 @@ import { recordMemoryEvent } from "@/lib/super-memory";
 import { coachLesson, recordCoachEpisode } from "@/lib/step-coach";
 import { handleFyodor } from "@/lib/fyodor/handle";
 import type { ConnectionSettings } from "@/lib/types";
-import { abortJob, beginJob, endJob, hasActiveJob, isAbortError } from "@/lib/run-control";
-import { looksLikeKeepGoing, looksLikeStopCommand } from "@/lib/fyodor/intent";
+import { abortJob, attachToRunningJob, beginJob, endJob, hasActiveJob, isAbortError } from "@/lib/run-control";
+import { looksLikeStopCommand } from "@/lib/fyodor/intent";
+import { shouldAttachToRunningTurn } from "@/lib/follow-up-loop";
 import { logError } from "@/lib/error-log";
 import { parseAppRole } from "@/lib/colleague/heartbeat";
 import type { AppRole } from "@/lib/colleague/types";
@@ -61,6 +62,28 @@ export async function POST(request: Request) {
     });
   }
 
+  const lastUser = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
+  const ping = String(lastUser?.content || "");
+  const attach = shouldAttachToRunningTurn(ping, hasActiveJob(body.threadId));
+  if (attach === "stop") abortJob(body.threadId);
+  if (attach === "queue" && attachToRunningJob(body.threadId, ping)) {
+    const { send } = encoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        send(controller, "status", { text: "принял уточнение, не сбрасываю текущий ход" });
+        send(controller, "done", { continued: true, todos: [] });
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
   const settings = resolveSettings(body.settings);
   if (!settings.apiKey) {
     return new Response(
@@ -72,7 +95,6 @@ export async function POST(request: Request) {
   }
 
   await ensureWorkspace();
-  const lastUser = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   let accountToken = body.accountToken?.trim() || "";
   if (!isFreeEdition() && !looksLikeStopCommand(lastUser?.content || "")) {
     try {
@@ -126,23 +148,6 @@ export async function POST(request: Request) {
   const history = trimHistoryForModel(body.messages ?? []);
   const { send } = encoder();
   const fallback = null;
-  const ping = String(lastUser?.content || "");
-  if (!looksLikeStopCommand(ping) && looksLikeKeepGoing(ping) && hasActiveJob(body.threadId)) {
-    const stream = new ReadableStream({
-      start(controller) {
-        send(controller, "status", { text: "продолжаю текущий ход, не сбрасываю работу" });
-        send(controller, "done", { continued: true, todos: [] });
-        controller.close();
-      },
-    });
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
-    });
-  }
   const job = beginJob(body.threadId);
 
   const stream = new ReadableStream({

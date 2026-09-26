@@ -4,6 +4,7 @@ const SHIP = [
   "test:guard",
   "test:stop",
   "test:until-goal",
+  "test:follow-up-loop",
   "test:free-sku",
   "test:work-pane",
   "test:fyodor",
