@@ -166,6 +166,7 @@ ok("hook begin on user", hook.includes("begin") && hook.includes("noteGuardUser"
 ok("hook skips begin on chat", /!taskNeedsWork/.test(hook) && hook.includes("on-user"));
 ok("hook classify on stop", hook.includes("stop-attempt") && hook.includes("decideGuardStop"));
 ok("hook keeps going if guard silent", hook.includes("guard_silent"));
+ok("hook writes last_assistant", hook.includes("noteGuardAssistant") && hook.includes("say"));
 ok("hook classify without detach", !hook.includes("--detach"));
 const crew = readFileSync(path.join(ROOT, "lib", "crew", "run.ts"), "utf8");
 ok("crew calls guard on empty tools", crew.includes("decideGuardStop") && crew.includes("noteGuardTool"));

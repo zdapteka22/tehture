@@ -37,15 +37,20 @@ export function hasDoneCriteria(state = {}) {
 }
 
 export function isHangComplaint(text) {
-  return /(завис|зависа|молч(ит|ишь)|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|почему (ты )?встал|опять завис|hung\b|stuck again)/i.test(
+  return /(завис|зависа|молч(ит|ишь)|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|почему (ты )?встал|опять завис|hung\b|stuck again|остановк|без конца|вечно останав)/i.test(
     String(text || ''),
   );
+}
+
+export function isShortNudge(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim().replace(/[.!?…]+$/g, '');
+  return /^(и|ну|да|ага|угу|ок|далее|дальше|давай|ещё|еще|чини|делай|поехали|го|ну что|и что|ну давай)$/i.test(t);
 }
 
 export function isFollowUpText(text, prevGoal = '') {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return true;
-  if (isHangComplaint(t)) return true;
+  if (isHangComplaint(t) || isShortNudge(t)) return true;
   if (!String(prevGoal || '').trim()) return false;
   if (significantPrefix(prevGoal) === significantPrefix(t)) return true;
   if (t.length <= 16) return true;
@@ -449,7 +454,7 @@ export function beginGoal(state, goal, doneWhen) {
   const incoming = (doneWhen || []).filter(Boolean);
   const prevGoal = String(state.goal || '').trim();
   const nextGoal = String(goal || '').trim();
-  const follow = Boolean(prevGoal && isFollowUpText(nextGoal, prevGoal));
+  const follow = isFollowUpText(nextGoal, prevGoal);
   if (follow) {
     const next = { ...state };
     if (incoming.length) next.done_when = incoming;
@@ -457,6 +462,7 @@ export function beginGoal(state, goal, doneWhen) {
     next.verdict = 'CONTINUE';
     next.reason = 'follow-up';
     next.stop_reason = null;
+    next.receipts_this_turn = 0;
     next.last_heartbeat = new Date().toISOString();
     next.pid = process.pid;
     next.last_user = nextGoal || next.last_user;
@@ -525,6 +531,15 @@ function cmdVerify(dir, cfg, args) {
   console.log('CLAIM=' + tool);
   console.log('VERDICT=' + out.verdict);
   console.log('REASON=' + out.reason);
+}
+
+function cmdSay(dir, cfg, args) {
+  const state = readState(dir, cfg);
+  const text = argVal(args, 'assistant') || argVal(args, 'text') || '';
+  if (text) state.last_assistant = String(text);
+  state.last_heartbeat = new Date().toISOString();
+  writeState(dir, state);
+  printStatus(state);
 }
 
 function cmdClassify(dir, cfg, args) {
@@ -850,6 +865,8 @@ function selftest() {
 
   pass &= ok('вопрос это follow-up', isFollowUpText('ты опять завис', 'почини оплату'));
   pass &= ok('жалоба завис без прошлой цели тоже follow-up', isFollowUpText('не процесы а имено ты опять завис', ''));
+  pass &= ok('короткое и это follow-up', isFollowUpText('и', 'почини оплату') && isShortNudge('и'));
+  pass &= ok('твои остановки это hang', isHangComplaint('самая главная проблема сейчас это твои остановки'));
   pass &= ok('новая задача не follow-up', !isFollowUpText('новая задача: оплата картой', 'вчерашняя цель про клик'));
 
   const persistDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-persist-'));
@@ -868,6 +885,14 @@ function selftest() {
     pass &= ok('classify пишет loops в state', after.loops === 6 && after.restarts === 2);
     pass &= ok('classify не рестартит вопрос', /ACTION=CONTINUE/.test(child.stdout || '') && !/RESTARTED=/.test(child.stdout || ''));
     pass &= ok('LOOPS.md и state вместе', /loops=6/.test(log) && after.loops === 6);
+    spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'say', '--assistant=иду дальше', `--dir=${persistDir}`], {
+      cwd: persistDir,
+      encoding: 'utf8',
+      timeout: 8000,
+      windowsHide: true,
+    });
+    const said = JSON.parse(fs.readFileSync(path.join(persistDir, 'loop-guard.state.json'), 'utf8'));
+    pass &= ok('say пишет last_assistant', said.last_assistant === 'иду дальше');
   } finally {
     fs.rmSync(persistDir, { recursive: true, force: true });
   }
@@ -992,6 +1017,7 @@ function main(argv = process.argv.slice(2), dir = __dirname) {
   if (cmd === 'receipt') return cmdReceipt(dir, cfg, args);
   if (cmd === 'verify-claim') return cmdVerify(dir, cfg, args);
   if (cmd === 'classify') return cmdClassify(dir, cfg, args);
+  if (cmd === 'say') return cmdSay(dir, cfg, args);
   if (cmd === 'on-user') return cmdOnUser(dir, cfg, args);
   if (cmd === 'verify-criterion') return cmdVerifyCriterion(dir, cfg, args);
   if (cmd === 'tick') return cmdTick(dir, cfg);

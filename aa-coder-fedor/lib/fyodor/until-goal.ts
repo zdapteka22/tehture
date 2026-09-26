@@ -9,6 +9,7 @@ import {
   looksLikeOperate,
   looksLikeSimpleHostTask,
   looksLikeHangComplaint,
+  looksLikeShortNudge,
   looksLikeStopCommand,
   looksLikeWrite,
   looksUnfinished,
@@ -161,7 +162,12 @@ export function shouldNudgeUntilGoal(opts: {
   if (looksLikeNarratingWork(opts.content) || looksUnfinished(opts.content) || looksLikeAskingUser(opts.content)) {
     return true;
   }
-  if (looksLikeHangComplaint(opts.userText) && !didPcWork(opts.usedTools, opts.changedPaths)) return true;
+  if (
+    (looksLikeHangComplaint(opts.userText) || looksLikeShortNudge(opts.userText) || looksLikeKeepGoing(opts.userText)) &&
+    !didPcWork(opts.usedTools, opts.changedPaths)
+  ) {
+    return true;
+  }
   if (missingGoalWork(opts.userText, opts.usedTools, opts.changedPaths)) return true;
 
   const liveSite =

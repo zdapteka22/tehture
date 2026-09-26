@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { looksLikeHangComplaint, taskNeedsWork } from "../lib/fyodor/intent";
+import { looksLikeHangComplaint, looksLikeShortNudge, taskNeedsWork } from "../lib/fyodor/intent";
 import {
   countWorkMoves,
   isLiveOutcomeJob,
@@ -142,6 +142,20 @@ ok(
 
 ok("hang complaint is work", taskNeedsWork("не процесы а имено ты опять завис"));
 ok("hang complaint detected", looksLikeHangComplaint("не процесы а имено ты опять завис"));
+ok("short и is work", taskNeedsWork("и") && looksLikeShortNudge("и"));
+ok(
+  "stop complaint is work",
+  taskNeedsWork("самая главная проблема сейчас это твои остановки") &&
+    looksLikeHangComplaint("самая главная проблема сейчас это твои остановки"),
+);
+ok(
+  "и + жду keeps going",
+  nudge({
+    userText: "и",
+    content: "жду",
+    usedTools: [],
+  }) === true,
+);
 ok(
   "hang + скажи чини keeps going",
   nudge({

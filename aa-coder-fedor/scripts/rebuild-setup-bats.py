@@ -610,8 +610,20 @@ def patch_hang_work_chunk(data: bytes) -> bytes:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
-    if "FEDOR_HANG_WORK" in text:
+    if "FEDOR_HANG_WORK2" in text:
         return data
+    old_hang = (
+        "continue\\b|завис|зависа|опять встал|не процес|"
+        "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again)/i;/*FEDOR_HANG_WORK*/"
+    )
+    new_hang = (
+        "continue\\b|завис|зависа|опять встал|не процес|"
+        "скажи чини|(чё|че|что|почему).{0,16}долго|hung\\b|stuck again|"
+        "остановк|без конца|вечно останав|(?:^|\\b)(и|ну|давай|дальше)(?:$|\\b))/i;"
+        "/*FEDOR_HANG_WORK*//*FEDOR_HANG_WORK2*/"
+    )
+    if old_hang in text:
+        text = text.replace(old_hang, new_hang, 1)
     old_o = (
         "let o=/(продолж|доделай|ещё раз|попробуй ещё|не останавливайся|не останавлиайся|"
         "не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|"

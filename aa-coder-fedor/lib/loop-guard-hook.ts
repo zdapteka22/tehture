@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { looksLikeStopCommand, taskNeedsWork } from "./fyodor/intent";
+import { looksLikeKeepGoing, looksLikeStopCommand, taskNeedsWork } from "./fyodor/intent";
 
 export type GuardDecision = {
   keepGoing: boolean;
@@ -104,14 +104,18 @@ export function noteGuardTool(tool: string, result = "", error: string | null = 
   runGuard(["heartbeat", `--pid=${process.pid}`]);
 }
 
+export function noteGuardAssistant(text: string): void {
+  const raw = String(text || "").trim();
+  if (!raw) return;
+  runGuard(["say", `--assistant=${raw.slice(0, 500)}`]);
+}
+
 export function decideGuardStop(assistantText: string, userText = ""): GuardDecision {
   const rawUser = String(userText || "").trim();
   if (looksLikeStopCommand(rawUser) || looksLikeStopCommand(assistantText)) {
     return { keepGoing: false, verdict: "DONE", action: "STOP", reason: "user_stop", restarted: false };
   }
-  if (!taskNeedsWork(rawUser)) {
-    return { keepGoing: false, verdict: "DONE", action: "STOP", reason: "chat", restarted: false };
-  }
+  noteGuardAssistant(assistantText);
   const r = runGuard([
     "classify",
     "--type=stop-attempt",
@@ -122,7 +126,18 @@ export function decideGuardStop(assistantText: string, userText = ""): GuardDeci
     return { keepGoing: true, verdict: "CONTINUE", action: "CONTINUE", reason: "guard_silent", restarted: false };
   }
   const parsed = parseDecision(r.out, r.status);
-  if (/no_reason|open_goal|restart_limit|guard_silent/i.test(parsed.reason) || parsed.verdict === "CONTINUE") {
+  if (parsed.reason === "user_stop" || parsed.reason === "goal_verified" || parsed.reason === "external_deny") {
+    return parsed;
+  }
+  if (parsed.verdict === "BLOCKED" && parsed.reason === "max_loops") {
+    return parsed;
+  }
+  if (
+    taskNeedsWork(rawUser) ||
+    looksLikeKeepGoing(rawUser) ||
+    /no_reason|open_goal|restart_limit|guard_silent|follow-up/i.test(parsed.reason) ||
+    parsed.verdict === "CONTINUE"
+  ) {
     return { ...parsed, keepGoing: true, verdict: parsed.verdict || "CONTINUE" };
   }
   return parsed;

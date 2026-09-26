@@ -118,16 +118,25 @@ export function looksLikeSimpleHostTask(text: string): boolean {
 }
 
 const FOLLOW_WORK_RE =
-  /(продолж|доделай|ещё раз|попробуй ещё|не останавливайся|не останавлиайся|не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|finish (it|this)|keep going|continue\b|завис|зависа|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|hung\b|stuck again)/i;
+  /(продолж|доделай|ещё раз|попробуй ещё|не останавливайся|не останавлиайся|не вставай|чё встал|че встал|че встаешь|делай всё|не останавливайся делай|finish (it|this)|keep going|continue\b|завис|зависа|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|hung\b|stuck again|остановк|без конца|вечно останав)/i;
 
 export function looksLikeHangComplaint(text: string): boolean {
-  return /(завис|зависа|молч(ит|ишь)|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|почему (ты )?встал|опять завис|hung\b|stuck again)/i.test(
+  return /(завис|зависа|молч(ит|ишь)|опять встал|не процес|скажи чини|(чё|че|что|почему).{0,16}долго|почему (ты )?встал|опять завис|hung\b|stuck again|остановк|без конца|вечно останав)/i.test(
     String(text || ""),
   );
 }
 
+export function looksLikeShortNudge(text: string): boolean {
+  const t = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.!?…]+$/g, "");
+  if (!t || looksLikeStopCommand(t)) return false;
+  return /^(и|ну|да|ага|угу|ок|далее|дальше|давай|ещё|еще|чини|делай|поехали|го|ну что|и что|ну давай)$/i.test(t);
+}
+
 export function looksLikeKeepGoing(text: string): boolean {
-  return FOLLOW_WORK_RE.test(String(text || "")) || looksLikeHangComplaint(text);
+  return FOLLOW_WORK_RE.test(String(text || "")) || looksLikeHangComplaint(text) || looksLikeShortNudge(text);
 }
 
 /** File / folder / program work that must not stop at a plan. */
@@ -145,7 +154,7 @@ export function taskNeedsWork(text: string): boolean {
   ) {
     return true;
   }
-  if (FOLLOW_WORK_RE.test(raw)) return true;
+  if (FOLLOW_WORK_RE.test(raw) || looksLikeHangComplaint(raw) || looksLikeShortNudge(raw)) return true;
   return false;
 }
 

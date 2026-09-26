@@ -9,7 +9,7 @@ import { actionFingerprint, FailureMemory, looksFailed, verbalLesson } from "../
 import type { ProviderId, TodoItem } from "../types";
 import { CREW_LABELS, type CrewRole } from "./roles";
 import { GOAL_KEEP_GOING, GOAL_NUDGE, shouldNudgeUntilGoal } from "../fyodor/until-goal";
-import { decideGuardStop, noteGuardTool } from "../loop-guard-hook";
+import { decideGuardStop, noteGuardAssistant, noteGuardTool } from "../loop-guard-hook";
 import { isAbortError, throwIfAborted } from "../run-control";
 
 export type CrewSend = (event: string, data: unknown) => void;
@@ -143,6 +143,11 @@ export async function runToolAgent(options: {
 
     if (!toolCalls.length) {
       throwIfAborted(options.signal);
+      try {
+        noteGuardAssistant(content || text);
+      } catch {
+        // guard must never block the loop
+      }
       const workLoop = Boolean(options.tools && options.userGoal);
       const needNudge =
         workLoop &&
