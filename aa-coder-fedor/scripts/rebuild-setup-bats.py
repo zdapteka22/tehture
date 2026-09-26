@@ -158,6 +158,10 @@ INJECT = {
     ".agent/loop-guard.json": REPO / ".agent" / "loop-guard.json",
     ".agent/resume-goal.mjs": REPO / ".agent" / "resume-goal.mjs",
     "lib/loop-guard-hook.ts": ROOT / "lib" / "loop-guard-hook.ts",
+    "lib/run-control.ts": ROOT / "lib" / "run-control.ts",
+    "lib/agent-boundary.ts": ROOT / "lib" / "agent-boundary.ts",
+    "lib/guard.ts": ROOT / "lib" / "guard.ts",
+    "lib/fyodor/intent.ts": ROOT / "lib" / "fyodor" / "intent.ts",
     ".agent/check.bat": REPO / ".agent" / "check.bat",
     ".agent/check-guard.bat": REPO / ".agent" / "check-guard.bat",
     "lib/installer-hta.ts": ROOT / "lib" / "installer-hta.ts",
@@ -655,6 +659,16 @@ def patch_hang_work_chunk(data: bytes) -> bytes:
     )
     if old_m in text:
         text = text.replace(old_m, new_m, 1)
+    old_t = (
+        "ход\\s*\\d+\\s*[—\\-:.]|зачитался|подменял действие|имитировать работу|приложение запущено)/i"
+    )
+    new_t = (
+        "ход\\s*\\d+\\s*[—\\-:.]|запускаю|установщик|реальный вызов|"
+        "зачитался|подменял действие|имитировать работу|приложение запущено)/i"
+        "/*FEDOR_PROMISE_NOT_WORK*/"
+    )
+    if "FEDOR_PROMISE_NOT_WORK" not in text and old_t in text:
+        text = text.replace(old_t, new_t, 1)
     return text.encode("utf-8")
 
 
@@ -753,6 +767,71 @@ def patch_web_files_chunk(data: bytes) -> bytes:
     return text.encode("utf-8")
 
 
+def patch_soft_powershell_chunk(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_SOFT_PS" in text:
+        return data
+    old = 'function bP(a){let b=String(a||"").trim();return!!b&&(!!/^(DENIED)\\b/.test(b)||bO.test(b))}'
+    new = (
+        "function bP(a){let b=String(a||\"\").trim();"
+        "if(/PowerShell выключен|нужна команда cmd\\.exe|Setup\\.bat через cmd/i.test(b))return!1;"
+        "return!!b&&(!!/^(DENIED)\\b/.test(b)||bO.test(b))}/*FEDOR_SOFT_PS*/"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+    return text.encode("utf-8")
+
+
+def patch_keep_job_chunk(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_KEEP_JOB" in text:
+        return data
+    old = "function g(a){let b=f(a),c=e.get(b);c&&!c.signal.aborted&&c.abort();"
+    new = (
+        "function o(a){let b=f(a),c=e.get(b);return!!(c&&!c.signal.aborted)}"
+        "function g(a){let b=f(a),c=e.get(b);c&&!c.signal.aborted&&c.abort();"
+        "/*FEDOR_KEEP_JOB*/"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+    old_exp = "c.d(b,{GY:()=>n,Lt:()=>k,Nc:()=>g,Te:()=>m,Xw:()=>d,Zn:()=>i,w$:()=>j,zf:()=>l})"
+    new_exp = "c.d(b,{GY:()=>n,Lt:()=>k,Nc:()=>g,Te:()=>m,Xw:()=>d,Zn:()=>i,w$:()=>j,zf:()=>l,Q2:()=>o})"
+    if old_exp in text:
+        text = text.replace(old_exp, new_exp, 1)
+    return text.encode("utf-8")
+
+
+def patch_chat_keep_job(data: bytes) -> bytes:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    if "FEDOR_KEEP_JOB_CHAT" in text:
+        return data
+    old = "),y=(0,m.Nc)(c.threadId),z=()=>(0,m.w$)(c.threadId,y);try{a.signal.addEventListener(\"abort\",z)}catch{}"
+    new = (
+        ");/*FEDOR_KEEP_JOB_CHAT*/"
+        "if((function(t){t=String(t||\"\").replace(/\\s+/g,\" \").trim().replace(/[.!?…]+$/g,\"\");"
+        "return /^(и+|ну+|да|и чё|и че|и что|ну что|опять стоишь|чини|давай)$/i.test(t)})(r?.content||\"\")"
+        "&&(0,m.Q2)&&(0,m.Q2)(c.threadId))return new Response(new ReadableStream({start(b){"
+        "x(b,\"status\",{text:\"продолжаю текущий ход, не сбрасываю работу\"});"
+        "x(b,\"done\",{continued:!0,todos:[]});b.close()}}),"
+        "{headers:{\"Content-Type\":\"text/event-stream; charset=utf-8\","
+        "\"Cache-Control\":\"no-cache, no-transform\",Connection:\"keep-alive\"}});"
+        "y=(0,m.Nc)(c.threadId)"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+    text = text.replace("a.signal.addEventListener(\"abort\",z)", "void 0", 1)
+    return text.encode("utf-8")
+
+
 def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
     norm = rel.replace("\\", "/")
     if norm.endswith("server/chunks/185.js"):
@@ -763,10 +842,13 @@ def maybe_patch_packed(rel: str, data: bytes, sku: str = "paid") -> bytes:
         data = patch_click_chunk(data)
         data = patch_harness_chunk(data)
         data = patch_web_files_chunk(data)
+        data = patch_soft_powershell_chunk(data)
     if norm.endswith("server/chunks/432.js"):
         data = patch_heavy_read_chunk(data)
+        data = patch_keep_job_chunk(data)
     if norm.endswith("server/app/api/chat/route.js"):
         data = patch_chat_free_sku(data)
+        data = patch_chat_keep_job(data)
     if "/static/chunks/" in norm and norm.endswith(".js"):
         data = patch_ui_copy(data, sku)
     if "pay/page" in norm and norm.endswith(".js"):

@@ -173,7 +173,7 @@ async function tryNoToolsDraft(
       ...settings,
       temperature: 0.1,
       maxTokens: 4096,
-      timeoutMs: 45_000,
+      timeoutMs: 180_000,
       messages: [
         {
           role: "system",

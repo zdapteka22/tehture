@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { looksLikeHangComplaint, looksLikeShortNudge, taskNeedsWork } from "../lib/fyodor/intent";
+import {
+  looksLikeHangComplaint,
+  looksLikeNarratingWork,
+  looksLikeShortNudge,
+  taskNeedsWork,
+} from "../lib/fyodor/intent";
+import { isHardBoundary } from "../lib/agent-boundary";
 import {
   countWorkMoves,
   isLiveOutcomeJob,
@@ -169,6 +175,20 @@ ok(
   !looksLikeHangComplaint("что такое массив") && !taskNeedsWork("что такое массив"),
 );
 ok("скачай apk is work", taskNeedsWork("скачай APK приложения ru.asa.pdd.android.app"));
+ok("запускаю сейчас is narration", looksLikeNarratingWork("Запускаю установщик — сейчас"));
+ok("иии is nudge", looksLikeShortNudge("иии") && looksLikeShortNudge("и чё"));
+ok(
+  "promise text keeps going",
+  nudge({
+    userText: "поставь кодера",
+    content: "Запускаю установщик — сейчас",
+    usedTools: [],
+  }) === true,
+);
+ok(
+  "powershell deny is not hard stop",
+  !isHardBoundary("PowerShell выключен. Нужна команда cmd.exe (dir, type, copy, set, cd /d)."),
+);
 
 const crew = readFileSync(path.join(process.cwd(), "lib/crew/run.ts"), "utf8");
 ok("crew asks guard", /decideGuardStop/.test(crew));

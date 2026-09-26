@@ -44,7 +44,7 @@ export function isHangComplaint(text) {
 
 export function isShortNudge(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim().replace(/[.!?…]+$/g, '');
-  return /^(и|ну|да|ага|угу|ок|далее|дальше|давай|ещё|еще|чини|делай|поехали|го|ну что|и что|ну давай)$/i.test(t);
+  return /^(и+|ну+|да|ага|угу|ок|далее|дальше|давай|ещё|еще|чини|делай|поехали|го|ну что|и что|и чё|и че|ну чё|ну че|ну давай|опять стоишь)$/i.test(t);
 }
 
 export function isFollowUpText(text, prevGoal = '') {

@@ -8,8 +8,8 @@ import { recordMemoryEvent } from "@/lib/super-memory";
 import { coachLesson, recordCoachEpisode } from "@/lib/step-coach";
 import { handleFyodor } from "@/lib/fyodor/handle";
 import type { ConnectionSettings } from "@/lib/types";
-import { abortJob, beginJob, endJob, isAbortError } from "@/lib/run-control";
-import { looksLikeStopCommand } from "@/lib/fyodor/intent";
+import { abortJob, beginJob, endJob, hasActiveJob, isAbortError } from "@/lib/run-control";
+import { looksLikeKeepGoing, looksLikeStopCommand } from "@/lib/fyodor/intent";
 import { logError } from "@/lib/error-log";
 import { parseAppRole } from "@/lib/colleague/heartbeat";
 import type { AppRole } from "@/lib/colleague/types";
@@ -126,18 +126,37 @@ export async function POST(request: Request) {
   const history = trimHistoryForModel(body.messages ?? []);
   const { send } = encoder();
   const fallback = null;
-  const job = beginJob(body.threadId);
-  const onClientGone = () => abortJob(body.threadId, job);
-  try {
-    request.signal.addEventListener("abort", onClientGone);
-  } catch {
-    // ignore
+  const ping = String(lastUser?.content || "");
+  if (!looksLikeStopCommand(ping) && looksLikeKeepGoing(ping) && hasActiveJob(body.threadId)) {
+    const stream = new ReadableStream({
+      start(controller) {
+        send(controller, "status", { text: "продолжаю текущий ход, не сбрасываю работу" });
+        send(controller, "done", { continued: true, todos: [] });
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
   }
+  const job = beginJob(body.threadId);
 
   const stream = new ReadableStream({
     async start(controller) {
+      const emit = (event: string, data: unknown) => {
+        if (job.signal.aborted) return;
+        try {
+          send(controller, event, data);
+        } catch {
+          // окно чата моргнуло — работа на диске продолжается
+        }
+      };
       try {
-        if (accountToken) send(controller, "account", { token: accountToken });
+        if (accountToken) emit("account", { token: accountToken });
         const account = userByToken(accountToken);
         const outcome = await handleFyodor({
           repo: getWorkspaceRoot(),
@@ -150,21 +169,22 @@ export async function POST(request: Request) {
           planId: account?.planId,
           signal: job.signal,
           role: parseAppRole(body.role),
-          send: (event, data) => {
-            if (job.signal.aborted) return;
-            send(controller, event, data);
-          },
+          send: emit,
         });
         if (job.signal.aborted) {
-          send(controller, "status", { text: "Остановлено." });
-          send(controller, "done", { todos: outcome.todos, stopped: true });
-          controller.close();
+          emit("status", { text: "Остановлено." });
+          emit("done", { todos: outcome.todos, stopped: true });
+          try {
+            controller.close();
+          } catch {
+            // ignore
+          }
           return;
         }
         if (accountToken) {
           try {
             const account = userByToken(accountToken);
-            if (account) send(controller, "quota", quotaOf(account));
+            if (account) emit("quota", quotaOf(account));
           } catch {
             // ignore
           }
@@ -174,7 +194,7 @@ export async function POST(request: Request) {
             task: lastUser?.content || "",
             tools: outcome.usedTools,
           });
-          send(controller, "coach", {
+          emit("coach", {
             steps: episode.steps,
             best: episode.best,
             grade: episode.grade,
@@ -183,18 +203,22 @@ export async function POST(request: Request) {
         } catch {
           // coach must never block chat
         }
-        send(controller, "done", {
+        emit("done", {
           todos: outcome.todos,
           mode: outcome.mode,
           level: outcome.level,
           auto: outcome.auto,
         });
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
       } catch (error) {
         if (isAbortError(error) || job.signal.aborted) {
+          emit("status", { text: "Остановлено." });
+          emit("done", { todos: [], stopped: true });
           try {
-            send(controller, "status", { text: "Остановлено." });
-            send(controller, "done", { todos: [], stopped: true });
             controller.close();
           } catch {
             // already closed
@@ -203,16 +227,15 @@ export async function POST(request: Request) {
         }
         const message = error instanceof Error ? error.message : "Unknown error";
         logError(error, "chat");
-        send(controller, "error", { message });
-        send(controller, "done", { todos: [] });
-        controller.close();
-      } finally {
-        endJob(body.threadId, job);
+        emit("error", { message });
+        emit("done", { todos: [] });
         try {
-          request.signal.removeEventListener("abort", onClientGone);
+          controller.close();
         } catch {
           // ignore
         }
+      } finally {
+        endJob(body.threadId, job);
       }
     },
   });

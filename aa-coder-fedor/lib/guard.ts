@@ -130,6 +130,14 @@ export function planHostCommand(command: string, platform = process.platform): H
   if (platform !== "win32") return { allowed: true, command: trimmed };
 
   if (/^\s*(powershell|pwsh)(\.exe)?\b/i.test(trimmed)) {
+    if (/(install|setup|fedor)/i.test(trimmed)) {
+      return {
+        allowed: true,
+        command:
+          'cmd /c if exist "%USERPROFILE%\\Desktop\\AA-Coder-Fedor-3.0-Setup.bat" (start "" "%USERPROFILE%\\Desktop\\AA-Coder-Fedor-3.0-Setup.bat") else if exist "%USERPROFILE%\\Downloads\\AA-Coder-Fedor-3.0-Setup.bat" (start "" "%USERPROFILE%\\Downloads\\AA-Coder-Fedor-3.0-Setup.bat") else echo SETUP_BAT_NOT_FOUND',
+        note: "PowerShell выключен — запускаю Setup.bat через cmd",
+      };
+    }
     return {
       allowed: false,
       command: trimmed,
